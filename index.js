@@ -11,9 +11,9 @@ const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 
 // AI API Keys
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''; // Your key will work with GPT-5 Nano
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const GROK_API_KEY = process.env.GROK_API_KEY || ''; // Add this to your .env
+const GROK_API_KEY = process.env.GROK_API_KEY || '';
 
 // Create a new client instance
 const client = new Client({ 
@@ -286,7 +286,7 @@ async function checkWithGemini(content) {
     }
 }
 
-// Check with OpenAI
+// Check with OpenAI (now using GPT-5 Nano)
 async function checkWithOpenAI(content) {
     if (!OPENAI_API_KEY) return { isViolation: false, reason: '' };
     
@@ -294,12 +294,13 @@ async function checkWithOpenAI(content) {
         const response = await axios.post(
             'https://api.openai.com/v1/chat/completions',
             {
-                model: "gpt-4o-mini",
+                model: "gpt-5-turbo-preview", // GPT-5 Nano model
                 messages: [{
                     role: "user",
                     content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
                 }],
-                max_tokens: 100
+                max_tokens: 100,
+                temperature: 0.0
             },
             {
                 headers: {
@@ -321,7 +322,41 @@ async function checkWithOpenAI(content) {
         return { isViolation: false, reason: '' };
     } catch (error) {
         console.error('OpenAI API error:', error.message);
-        return { isViolation: false, reason: '' };
+        // Fallback to gpt-4o-mini if gpt-5-turbo-preview is not available
+        try {
+            const response = await axios.post(
+                'https://api.openai.com/v1/chat/completions',
+                {
+                    model: "gpt-4o-mini",
+                    messages: [{
+                        role: "user",
+                        content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
+                    }],
+                    max_tokens: 100,
+                    temperature: 0.0
+                },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+            
+            const result = response.data.choices?.[0]?.message?.content || 'OK';
+            
+            if (result.startsWith('VIOLATION:')) {
+                return {
+                    isViolation: true,
+                    reason: result.replace('VIOLATION:', '').trim()
+                };
+            }
+            
+            return { isViolation: false, reason: '' };
+        } catch (fallbackError) {
+            console.error('OpenAI Fallback API error:', fallbackError.message);
+            return { isViolation: false, reason: '' };
+        }
     }
 }
 
@@ -411,7 +446,7 @@ async function checkWithAI(content) {
     let result = await checkWithGemini(content);
     if (result.isViolation) return result;
     
-    // Try OpenAI second
+    // Try OpenAI second (GPT-5 Nano)
     result = await checkWithOpenAI(content);
     if (result.isViolation) return result;
     
