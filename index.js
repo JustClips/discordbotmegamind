@@ -1130,96 +1130,68 @@ const commands = [
             subcommand
                 .setName('bank')
                 .setDescription('Bank commands')
-                .addSubcommandGroup(group =>
-                    group
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('deposit')
                         .setDescription('Deposit coins')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('coins')
-                                .setDescription('Deposit coins')
-                                .addIntegerOption(option => option.setName('amount').setDescription('Amount to deposit').setRequired(true).setMinValue(1))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to deposit').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('withdraw')
                         .setDescription('Withdraw coins')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('coins')
-                                .setDescription('Withdraw coins')
-                                .addIntegerOption(option => option.setName('amount').setDescription('Amount to withdraw').setRequired(true).setMinValue(1))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to withdraw').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('balance')
-                        .setDescription('Check bank balance')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('check')
-                                .setDescription('Check bank balance')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Check bank balance'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('interest')
-                        .setDescription('Check interest rate')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rate')
-                                .setDescription('Check interest rate')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Check interest rate'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('loan')
-                        .setDescription('Loan commands')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('apply')
-                                .setDescription('Apply for a loan')
-                                .addIntegerOption(option => option.setName('amount').setDescription('Amount to borrow').setRequired(true).setMinValue(100)))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('pay')
-                                .setDescription('Pay back a loan')
-                                .addIntegerOption(option => option.setName('amount').setDescription('Amount to pay').setRequired(true).setMinValue(1)))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('balance')
-                                .setDescription('Check loan balance')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Apply for a loan')
+                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to borrow').setRequired(true).setMinValue(100)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('payloan')
+                        .setDescription('Pay back a loan')
+                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to pay').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('loanbalance')
+                        .setDescription('Check loan balance'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('invest')
-                        .setDescription('Investment commands')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('stocks')
-                                .setDescription('View stocks'))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('buy')
-                                .setDescription('Buy stocks')
-                                .addStringOption(option => option.setName('stock').setDescription('Stock to buy').setRequired(true))
-                                .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('sell')
-                                .setDescription('Sell stocks')
-                                .addStringOption(option => option.setName('stock').setDescription('Stock to sell').setRequired(true))
-                                .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('portfolio')
-                                .setDescription('View stock portfolio'))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('dividends')
-                                .setDescription('Check dividends')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('View stocks'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('buystock')
+                        .setDescription('Buy stocks')
+                        .addStringOption(option => option.setName('stock').setDescription('Stock to buy').setRequired(true))
+                        .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('sellstock')
+                        .setDescription('Sell stocks')
+                        .addStringOption(option => option.setName('stock').setDescription('Stock to sell').setRequired(true))
+                        .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('portfolio')
+                        .setDescription('View stock portfolio'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('dividends')
+                        .setDescription('Check dividends'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('transfer')
-                        .setDescription('Transfer between accounts')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('send')
-                                .setDescription('Send money to another user')
-                                .addUserOption(option => option.setName('user').setDescription('User to send to').setRequired(true))
-                                .addIntegerOption(option => option.setName('amount').setDescription('Amount to send').setRequired(true).setMinValue(1)))))
+                        .setDescription('Send money to another user')
+                        .addUserOption(option => option.setName('user').setDescription('User to send to').setRequired(true))
+                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to send').setRequired(true).setMinValue(1))))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('achievements')
@@ -1234,32 +1206,20 @@ const commands = [
             subcommand
                 .setName('reputation')
                 .setDescription('Reputation commands')
-                .addSubcommandGroup(group =>
-                    group
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('give')
-                        .setDescription('Give reputation')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rep')
-                                .setDescription('Give reputation to a user')
-                                .addUserOption(option => option.setName('user').setDescription('User to give rep to').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Give reputation to a user')
+                        .addUserOption(option => option.setName('user').setDescription('User to give rep to').setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('check')
                         .setDescription('Check reputation')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rep')
-                                .setDescription('Check reputation')
-                                .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('leaderboard')
-                        .setDescription('View reputation leaderboard')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rep')
-                                .setDescription('View reputation leaderboard'))))
+                        .setDescription('View reputation leaderboard')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('streaks')
@@ -1325,279 +1285,163 @@ const commands = [
             subcommand
                 .setName('tax')
                 .setDescription('Tax system commands')
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('set')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('setrate')
                         .setDescription('Set tax rate')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rate')
-                                .setDescription('Set tax rate')
-                                .addIntegerOption(option => option.setName('rate').setDescription('Tax rate (0-100)').setRequired(true).setMinValue(0).setMaxValue(100))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('check')
-                        .setDescription('Check tax rate')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('rate')
-                                .setDescription('Check tax rate')))
-                .addSubcommandGroup(group =>
-                    group
+                        .addIntegerOption(option => option.setName('rate').setDescription('Tax rate (0-100)').setRequired(true).setMinValue(0).setMaxValue(100)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('checkrate')
+                        .setDescription('Check tax rate'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('collect')
-                        .setDescription('Collect taxes')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('taxes')
-                                .setDescription('Collect taxes')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Collect taxes'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('distribute')
-                        .setDescription('Distribute taxes')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('taxes')
-                                .setDescription('Distribute taxes to users')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Distribute taxes to users'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('exempt')
                         .setDescription('Exempt user from taxes')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('user')
-                                .setDescription('Exempt user from taxes')
-                                .addUserOption(option => option.setName('user').setDescription('User to exempt').setRequired(true))
-                                .addBooleanOption(option => option.setName('exempt').setDescription('Exempt status').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('view')
-                        .setDescription('View tax records')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('records')
-                                .setDescription('View tax records'))))
+                        .addUserOption(option => option.setName('user').setDescription('User to exempt').setRequired(true))
+                        .addBooleanOption(option => option.setName('exempt').setDescription('Exempt status').setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('viewrecords')
+                        .setDescription('View tax records')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('lottery')
                 .setDescription('Lottery system')
-                .addSubcommandGroup(group =>
-                    group
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('buy')
                         .setDescription('Buy lottery tickets')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('tickets')
-                                .setDescription('Buy lottery tickets')
-                                .addIntegerOption(option => option.setName('amount').setDescription('Number of tickets').setRequired(false).setMinValue(1).setMaxValue(100))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addIntegerOption(option => option.setName('amount').setDescription('Number of tickets').setRequired(false).setMinValue(1).setMaxValue(100)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('draw')
-                        .setDescription('Draw lottery (admin only)')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('winner')
-                                .setDescription('Draw lottery winner')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Draw lottery (admin only)'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('jackpot')
-                        .setDescription('View current jackpot')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('amount')
-                                .setDescription('View current jackpot')))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('View current jackpot'))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('history')
-                        .setDescription('View lottery history')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('draws')
-                                .setDescription('View lottery history'))))
+                        .setDescription('View lottery history')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('auction')
                 .setDescription('Auction system')
-                .addSubcommandGroup(group =>
-                    group
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('create')
-                        .setDescription('Create auction')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('item')
-                                .setDescription('Create auction for item')
-                                .addStringOption(option => option.setName('item').setDescription('Item to auction').setRequired(true))
-                                .addIntegerOption(option => option.setName('starting_bid').setDescription('Starting bid').setRequired(true).setMinValue(1))
-                                .addIntegerOption(option => option.setName('duration').setDescription('Duration in hours').setRequired(true).setMinValue(1).setMaxValue(168))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Create auction for item')
+                        .addStringOption(option => option.setName('item').setDescription('Item to auction').setRequired(true))
+                        .addIntegerOption(option => option.setName('starting_bid').setDescription('Starting bid').setRequired(true).setMinValue(1))
+                        .addIntegerOption(option => option.setName('duration').setDescription('Duration in hours').setRequired(true).setMinValue(1).setMaxValue(168)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('bid')
-                        .setDescription('Place bid')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('place')
-                                .setDescription('Place bid on item')
-                                .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))
-                                .addIntegerOption(option => option.setName('amount').setDescription('Bid amount').setRequired(true).setMinValue(1))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Place bid on item')
+                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))
+                        .addIntegerOption(option => option.setName('amount').setDescription('Bid amount').setRequired(true).setMinValue(1)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('view')
-                        .setDescription('View auctions')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('active')
-                                .setDescription('View active auctions'))
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('item')
-                                .setDescription('View specific auction')
-                                .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('View active auctions'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('viewitem')
+                        .setDescription('View specific auction')
+                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('cancel')
                         .setDescription('Cancel auction')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('auction')
-                                .setDescription('Cancel auction')
-                                .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('end')
                         .setDescription('End auction')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('auction')
-                                .setDescription('End auction')
-                                .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
+                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('history')
-                        .setDescription('View auction history')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('bids')
-                                .setDescription('View auction history'))))
+                        .setDescription('View auction history')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('casino')
                 .setDescription('Casino games')
-                .addSubcommandGroup(group =>
-                    group
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('slots')
-                        .setDescription('Slot machine')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play slots')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play slots')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('blackjack')
-                        .setDescription('Blackjack')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play blackjack')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play blackjack')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('roulette')
-                        .setDescription('Roulette')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play roulette')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play roulette')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('keno')
-                        .setDescription('Keno')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play keno')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play keno')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('craps')
-                        .setDescription('Craps')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play craps')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play craps')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('baccarat')
-                        .setDescription('Baccarat')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play baccarat')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play baccarat')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('poker')
-                        .setDescription('Poker')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play poker')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play poker')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('videopoker')
-                        .setDescription('Video poker')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play video poker')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play video poker')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('bingo')
-                        .setDescription('Bingo')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play bingo')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play bingo')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('scratchcards')
-                        .setDescription('Scratch cards')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play scratch cards')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play scratch cards')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('wheeloffortune')
-                        .setDescription('Wheel of fortune')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('spin')
-                                .setDescription('Spin the wheel')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Spin the wheel')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('highlow')
-                        .setDescription('High low')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play high low')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))
-                .addSubcommandGroup(group =>
-                    group
+                        .setDescription('Play high low')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
+                .addSubcommand(subcommand =>
+                    subcommand
                         .setName('war')
-                        .setDescription('War card game')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('play')
-                                .setDescription('Play war')
-                                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000))))),
+                        .setDescription('Play war')
+                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))),
 
     // Ticket System
     new SlashCommandBuilder()
