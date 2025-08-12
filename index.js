@@ -229,7 +229,7 @@ function normalizeText(text) {
     // Apply Unicode mapping
     Object.keys(unicodeMap).forEach(key => {
         // Properly escape special regex characters
-        const escapedKey = key.replace(/[.*+?^${}()|[```\```/g, '\\$&');
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[```{}]/g, '\\$&');
         const regex = new RegExp(escapedKey, 'g');
         normalized = normalized.replace(regex, unicodeMap[key]);
     });
