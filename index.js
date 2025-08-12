@@ -2,15 +2,20 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const QuickChart = require('quickchart-js');
 const fs = require('fs').promises;
-const axios = require('axios');
+const OpenAI = require('openai');
 
 // Configuration - Using environment variable for OWNER_IDS
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
 const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 
-// AI API Keys (Only Gemini now)
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+// AI API Keys (OpenAI only now)
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+
+// Create OpenAI client
+const openai = new OpenAI({
+    apiKey: OPENAI_API_KEY
+});
 
 // Create a new client instance
 const client = new Client({ 
@@ -238,8 +243,8 @@ async function learnFromConversation(message) {
 // --- UPDATED checkWithGemini FUNCTION WITH RETRY LOGIC ---
 // Enhanced AI with conversation context and knowledge, including retry logic for rate limits
 async function checkWithGemini(content, channelId, userId, username, isDirectMessage = false) {
-    if (!GEMINI_API_KEY) {
-        console.warn("checkWithGemini called but GEMINI_API_KEY is missing.");
+    if (!OPENAI_API_KEY) {
+        console.warn("checkWithGemini called but OPENAI_API_KEY is missing.");
         return { isViolation: false, reason: '', response: '' };
     }
 
@@ -323,46 +328,21 @@ ${formattedContext || 'No recent context'}${knowledgeText}
 Respond ONLY with the JSON object as specified.`;
             }
 
-            const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-                {
-                    contents: [{
-                        parts: [{
-                            text: prompt
-                        }]
-                    }],
-                    generationConfig: {
-                        temperature: isDirectMessage ? 0.7 : 0.0,
-                        maxOutputTokens: isDirectMessage ? 500 : 300
-                    },
-                    safetySettings: [
-                        {
-                            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                            threshold: "BLOCK_NONE"
-                        },
-                        {
-                            category: "HARM_CATEGORY_HARASSMENT",
-                            threshold: "BLOCK_NONE"
-                        },
-                        {
-                            category: "HARM_CATEGORY_HATE_SPEECH",
-                            threshold: "BLOCK_NONE"
-                        },
-                        {
-                            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                            threshold: "BLOCK_NONE"
-                        }
-                    ]
-                },
-                {
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 15000 // Add a timeout (15 seconds) for the request
-                }
-            );
+            // Use OpenAI instead of Gemini
+            const response = await openai.chat.completions.create({
+                model: "gpt-5",
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+                temperature: isDirectMessage ? 0.7 : 0.0,
+                max_tokens: isDirectMessage ? 500 : 300,
+                response_format: { type: "json_object" } // Ensure JSON response
+            });
 
-            const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const result = response.choices[0]?.message?.content || '';
 
             if (isDirectMessage) {
                 // For direct messages, return the natural response
@@ -410,7 +390,7 @@ Respond ONLY with the JSON object as specified.`;
             return { isViolation: false, reason: '', response: '' };
 
         } catch (error) {
-            console.error(`Gemini API attempt ${attempt + 1} failed:`);
+            console.error(`OpenAI API attempt ${attempt + 1} failed:`);
 
             // Check if it's a rate limit error (429)
             if (error.response && error.response.status === 429) {
@@ -434,7 +414,7 @@ Respond ONLY with the JSON object as specified.`;
                     await delay(finalDelay);
                     continue; // Retry the loop
                 } else {
-                    console.error(`Gemini API error: Max retries (${MAX_RETRIES}) exceeded for rate limit (429).`);
+                    console.error(`OpenAI API error: Max retries (${MAX_RETRIES}) exceeded for rate limit (429).`);
                     // Log more details if available
                     if (error.response?.data) {
                         console.error('Rate limit details:', error.response.data);
@@ -442,7 +422,7 @@ Respond ONLY with the JSON object as specified.`;
                 }
             } else {
                 // Handle other errors (network, 5xx, etc.)
-                console.error('Gemini API error (non-429):', error.message);
+                console.error('OpenAI API error (non-429):', error.message);
                 // Log more details if available
                 if (error.response) {
                     console.error('Status:', error.response.status);
@@ -703,8 +683,8 @@ async function autoModerate(message) {
         return await handleViolation(message, 'Inappropriate content detected', 20, 'nsfw');
     }
     
-    // Check with Gemini AI if API key is available
-    if (GEMINI_API_KEY) {
+    // Check with OpenAI if API key is available
+    if (OPENAI_API_KEY) {
         const aiResult = await checkWithGemini(content, message.channel.id, message.author.id, message.author.username);
         if (aiResult.isViolation) {
             const reason = `AI detected violation: ${aiResult.reason}`;
@@ -1126,7 +1106,7 @@ client.on(Events.MessageCreate, async message => {
         }
         
         // Handle general conversation with AI
-        if (GEMINI_API_KEY) {
+        if (OPENAI_API_KEY) {
             try {
                 const aiResponse = await checkWithGemini(
                     message.content, 
@@ -1614,7 +1594,7 @@ client.on(Events.MessageCreate, async message => {
         // If not moderated, check for direct communication with bot
         if (!wasModerated && (message.mentions.users.has(client.user.id) || message.content.toLowerCase().includes(client.user.username.toLowerCase()))) {
             // Handle conversation with bot
-            if (GEMINI_API_KEY) {
+            if (OPENAI_API_KEY) {
                 try {
                     // Remove bot mention from content
                     let cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
@@ -1770,7 +1750,7 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Unmute error:', error);
                 await interaction.reply({
-                    content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
+                    content: '❌ Failed to unmute the user. They might not be muted or I don't have permission.',
                     ephemeral: true
                 });
             }
