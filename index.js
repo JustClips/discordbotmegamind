@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
 // Configuration
 const MOD_ROLE_ID = '1398413061169352949';
@@ -25,6 +25,31 @@ function hasPermission(member) {
     if (member.roles.cache.has(MOD_ROLE_ID)) return true;
     
     return false;
+}
+
+// Check if user can manage roles (for role commands)
+function canManageRoles(member, targetRole) {
+    // Bot owners can always manage roles
+    if (OWNER_IDS.includes(member.id)) return true;
+    
+    // Check if member has ManageRoles permission
+    if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) return false;
+    
+    // Check if target role is lower than member's highest role
+    const highestRole = member.roles.highest;
+    return targetRole.position < highestRole.position;
+}
+
+// Check if user can manage target member
+function canManageMember(member, targetMember) {
+    // Bot owners can always manage members
+    if (OWNER_IDS.includes(member.id)) return true;
+    
+    // Check if member has ModerateMembers permission
+    if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
+    
+    // Check if target member is lower in role hierarchy
+    return member.roles.highest.position > targetMember.roles.highest.position;
 }
 
 // Command definitions
@@ -202,6 +227,40 @@ const commands = [
         .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('Channel to send announcement to')
+                .setRequired(false)),
+
+    // Gamble command
+    new SlashCommandBuilder()
+        .setName('gamble')
+        .setDescription('Gamble some coins')
+        .addIntegerOption(option =>
+            option.setName('amount')
+                .setDescription('Amount to gamble (10-1000)')
+                .setRequired(true)
+                .setMinValue(10)
+                .setMaxValue(1000)),
+
+    // Balance command
+    new SlashCommandBuilder()
+        .setName('balance')
+        .setDescription('Check your coin balance'),
+
+    // Leaderboard command
+    new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('View the coin leaderboard'),
+
+    // Vote kick command
+    new SlashCommandBuilder()
+        .setName('votekick')
+        .setDescription('Start a vote to kick a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('The user to vote kick')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for votekick')
                 .setRequired(false))
 ].map(command => command.toJSON());
 
@@ -212,6 +271,14 @@ const temporaryLocks = new Map();
 
 // Store for warnings (in production, use a database)
 const warnings = new Map();
+
+// Store for gambling data
+const userBalances = new Map(); // userId -> balance
+const userCooldowns = new Map(); // userId -> timestamp
+
+// Store for votekick data
+const voteKicks = new Map(); // channelId -> {targetUser, votes, voters, startTime}
+const voteKickCooldowns = new Map(); // targetUserId -> timestamp
 
 // Register commands
 client.once(Events.ClientReady, async () => {
@@ -240,12 +307,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const { commandName, options, member, channel } = interaction;
 
-    // Check permissions
-    if (!hasPermission(member)) {
-        return await interaction.reply({
-            content: '❌ You don\'t have permission to use this command! You need the Moderator role or be the bot owner.',
-            ephemeral: true
-        });
+    // Check permissions for mod commands
+    if (['mute', 'unmute', 'purge', 'purgehumans', 'purgebots', 'lock', 'unlock', 'slowmode', 'warn', 'clearuser', 'addrole', 'removerole', 'nick', 'topic', 'announce'].includes(commandName)) {
+        if (!hasPermission(member)) {
+            return await interaction.reply({
+                content: '❌ You don\'t have permission to use this command! You need the Moderator role or be the bot owner.',
+                ephemeral: true
+            });
+        }
     }
 
     try {
@@ -771,6 +840,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
+            // Check permissions
+            if (!canManageRoles(member, role)) {
+                return await interaction.reply({
+                    content: '❌ You don\'t have permission to add this role! You need Manage Roles permission and the role must be lower than your highest role.',
+                    ephemeral: true
+                });
+            }
+
+            // Check if target member can receive this role
+            if (!canManageMember(member, targetMember)) {
+                return await interaction.reply({
+                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
+                    ephemeral: true
+                });
+            }
+
             try {
                 await targetMember.roles.add(role);
                 await interaction.reply({
@@ -799,6 +884,22 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
+            // Check permissions
+            if (!canManageRoles(member, role)) {
+                return await interaction.reply({
+                    content: '❌ You don\'t have permission to remove this role! You need Manage Roles permission and the role must be lower than your highest role.',
+                    ephemeral: true
+                });
+            }
+
+            // Check if target member can be managed
+            if (!canManageMember(member, targetMember)) {
+                return await interaction.reply({
+                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
+                    ephemeral: true
+                });
+            }
+
             try {
                 await targetMember.roles.remove(role);
                 await interaction.reply({
@@ -823,6 +924,14 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!targetMember) {
                 return await interaction.reply({
                     content: '❌ User not found!',
+                    ephemeral: true
+                });
+            }
+
+            // Check if target member can be managed
+            if (!canManageMember(member, targetMember)) {
+                return await interaction.reply({
+                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
                     ephemeral: true
                 });
             }
@@ -885,6 +994,237 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
             }
+        }
+
+        // Gamble command
+        else if (commandName === 'gamble') {
+            const amount = options.getInteger('amount');
+            const userId = member.user.id;
+
+            // Initialize user balance if not exists
+            if (!userBalances.has(userId)) {
+                userBalances.set(userId, 100); // Starting balance
+            }
+
+            const balance = userBalances.get(userId);
+
+            // Check if user has enough coins
+            if (amount > balance) {
+                return await interaction.reply({
+                    content: `❌ You don't have enough coins! Your balance: ${balance} coins`,
+                    ephemeral: true
+                });
+            }
+
+            // Check cooldown
+            const lastGamble = userCooldowns.get(userId) || 0;
+            const now = Date.now();
+            const cooldownTime = 30000; // 30 seconds cooldown
+
+            if (now - lastGamble < cooldownTime) {
+                const remaining = Math.ceil((cooldownTime - (now - lastGamble)) / 1000);
+                return await interaction.reply({
+                    content: `❌ Please wait ${remaining} seconds before gambling again!`,
+                    ephemeral: true
+                });
+            }
+
+            // Set cooldown
+            userCooldowns.set(userId, now);
+
+            // 50% chance to win
+            const isWin = Math.random() < 0.5;
+            let newBalance;
+
+            if (isWin) {
+                newBalance = balance + amount;
+                userBalances.set(userId, newBalance);
+                await interaction.reply({
+                    content: `🎉 You won ${amount} coins!\nNew balance: ${newBalance} coins`
+                });
+            } else {
+                newBalance = balance - amount;
+                userBalances.set(userId, newBalance);
+                await interaction.reply({
+                    content: `😢 You lost ${amount} coins!\nNew balance: ${newBalance} coins`
+                });
+            }
+        }
+
+        // Balance command
+        else if (commandName === 'balance') {
+            const userId = member.user.id;
+
+            // Initialize user balance if not exists
+            if (!userBalances.has(userId)) {
+                userBalances.set(userId, 100); // Starting balance
+            }
+
+            const balance = userBalances.get(userId);
+            await interaction.reply({
+                content: `💰 Your balance: ${balance} coins`
+            });
+        }
+
+        // Leaderboard command
+        else if (commandName === 'leaderboard') {
+            // Convert map to array and sort by balance
+            const sortedUsers = Array.from(userBalances.entries())
+                .map(([userId, balance]) => ({ userId, balance }))
+                .sort((a, b) => b.balance - a.balance)
+                .slice(0, 10); // Top 10
+
+            if (sortedUsers.length === 0) {
+                return await interaction.reply({
+                    content: '❌ No users found in the leaderboard!',
+                    ephemeral: true
+                });
+            }
+
+            let leaderboardText = '**🏆 Coin Leaderboard**\n\n';
+            sortedUsers.forEach((user, index) => {
+                const position = index + 1;
+                const emoji = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
+                leaderboardText += `${emoji} <@${user.userId}> - ${user.balance} coins\n`;
+            });
+
+            await interaction.reply({
+                content: leaderboardText
+            });
+        }
+
+        // Vote kick command
+        else if (commandName === 'votekick') {
+            const targetUser = options.getUser('user');
+            const reason = options.getString('reason') || 'No reason provided';
+
+            // Check if target is the command user
+            if (targetUser.id === member.user.id) {
+                return await interaction.reply({
+                    content: '❌ You cannot votekick yourself!',
+                    ephemeral: true
+                });
+            }
+
+            // Check if target is a bot
+            if (targetUser.bot) {
+                return await interaction.reply({
+                    content: '❌ You cannot votekick bots!',
+                    ephemeral: true
+                });
+            }
+
+            // Check votekick cooldown for this user
+            const lastVoteKick = voteKickCooldowns.get(targetUser.id) || 0;
+            const now = Date.now();
+            const cooldownTime = 600000; // 10 minutes cooldown
+
+            if (now - lastVoteKick < cooldownTime) {
+                const remaining = Math.ceil((cooldownTime - (now - lastVoteKick)) / 60000);
+                return await interaction.reply({
+                    content: `❌ This user was recently in a votekick! Please wait ${remaining} minutes before starting another votekick.`,
+                    ephemeral: true
+                });
+            }
+
+            // Check if there's already a votekick in this channel
+            if (voteKicks.has(channel.id)) {
+                return await interaction.reply({
+                    content: '❌ There is already an active votekick in this channel!',
+                    ephemeral: true
+                });
+            }
+
+            // Create votekick
+            const voteKickData = {
+                targetUser: targetUser,
+                votes: 1, // Creator's vote
+                voters: [member.user.id],
+                startTime: now,
+                reason: reason
+            };
+
+            voteKicks.set(channel.id, voteKickData);
+
+            // Set cooldown for target user
+            voteKickCooldowns.set(targetUser.id, now);
+
+            // Send votekick message
+            const voteKickMessage = await interaction.reply({
+                content: `🗳️ **VOTEKICK STARTED**\n\n<@${targetUser.id}> is being voted to be kicked!\n**Reason:** ${reason}\n\n✅ Votes: 1/5\n\nReact with ✅ to vote YES\nReact with ❌ to vote NO\n\nVoting ends in 60 seconds!`,
+                fetchReply: true
+            });
+
+            // Add reactions
+            await voteKickMessage.react('✅');
+            await voteKickMessage.react('❌');
+
+            // Collect reactions
+            const filter = (reaction, user) => {
+                return ['✅', '❌'].includes(reaction.emoji.name) && !user.bot;
+            };
+
+            const collector = voteKickMessage.createReactionCollector({ 
+                filter, 
+                time: 60000 // 60 seconds
+            });
+
+            collector.on('collect', async (reaction, user) => {
+                // Check if user already voted
+                if (voteKicks.get(channel.id).voters.includes(user.id)) {
+                    return;
+                }
+
+                // Add vote
+                const currentData = voteKicks.get(channel.id);
+                currentData.voters.push(user.id);
+                
+                if (reaction.emoji.name === '✅') {
+                    currentData.votes++;
+                }
+                
+                voteKicks.set(channel.id, currentData);
+                
+                // Update message
+                const updatedVotes = voteKicks.get(channel.id).votes;
+                await voteKickMessage.edit({
+                    content: `🗳️ **VOTEKICK STARTED**\n\n<@${targetUser.id}> is being voted to be kicked!\n**Reason:** ${reason}\n\n✅ Votes: ${updatedVotes}/5\n\nReact with ✅ to vote YES\nReact with ❌ to vote NO\n\nVoting ends in 60 seconds!`
+                });
+            });
+
+            collector.on('end', async (collected) => {
+                const finalData = voteKicks.get(channel.id);
+                if (!finalData) return;
+
+                // Remove from active votekicks
+                voteKicks.delete(channel.id);
+
+                if (finalData.votes >= 5) {
+                    // Kick the user
+                    try {
+                        const targetMember = await interaction.guild.members.fetch(finalData.targetUser.id);
+                        if (targetMember) {
+                            await targetMember.kick(`Votekick: ${finalData.reason}`);
+                            await interaction.followUp({
+                                content: `✅ <@${finalData.targetUser.id}> has been kicked by community vote!\n**Reason:** ${finalData.reason}`
+                            });
+                        } else {
+                            await interaction.followUp({
+                                content: `❌ <@${finalData.targetUser.id}> left the server before being kicked.`
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Votekick error:', error);
+                        await interaction.followUp({
+                            content: `❌ Failed to kick <@${finalData.targetUser.id}>. I might not have permission.`
+                        });
+                    }
+                } else {
+                    await interaction.followUp({
+                        content: `❌ Votekick failed. Only ${finalData.votes}/5 votes were received for <@${finalData.targetUser.id}>.`
+                    });
+                }
+            });
         }
 
     } catch (error) {
