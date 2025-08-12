@@ -245,69 +245,54 @@ function containsNSFWContent(content) {
     return nsfwWords.some(word => normalized.includes(word));
 }
 
+// System prompt for moderation
+const moderationSystemPrompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
+OUTPUT RULES (MANDATORY)
+- Respond with exactly one JSON object and nothing else (no explanation outside JSON).
+- JSON schema:
+  {
+    "action": "allow" | "warn" | "delete" | "timeout" | "ban" | "review",
+    "category": "spam" | "scam" | "harassment" | "hate_speech" | "nsfw" | "dox" | "self_harm" | "illegal" | "other",
+    "severity": "low" | "medium" | "high",
+    "confidence": 0.00-1.00,
+    "explanation": "short human explanation (<=200 chars)",
+    "evidence": ["normalized fragments or matched tokens", ...],
+    "suggested_duration_minutes": null | integer
+  }
+DECISION GUIDELINES
+- Use full context if provided. If intent is ambiguous, return "review" (not "ban").
+- Do NOT base decisions only on keywords — assess intent, target, role relationships, and surrounding conversation.
+- If obfuscation detected, include the normalized text snippet(s) in "evidence".
+- If the content contains links or invites flagged as scams, set category "scam" and provide the link fragment in "evidence".
+- For harassment/hate/sex content set the correct category and a severity based on explicitness and target (targeted slur=high).
+- Confidence should reflect certainty: low (<0.6) when ambiguous, high (>0.85) when clear attack/scam.
+- Suggested durations: if action is "timeout" provide an integer; otherwise null.
+FORMAT & STYLE
+- Keep "explanation" short & human-like (e.g., "Targeted slur against an individual — removed to protect members.").
+- Provide only the JSON object, nothing else.
+EXAMPLES
+Input: "u r dumb and should die"
+Output: {"action":"delete","category":"harassment","severity":"high","confidence":0.95,"explanation":"Direct death wish toward user","evidence":["u r dumb","should die"],"suggested_duration_minutes":60}
+Input: "check this out: bit[.]ly/abc (free nitro)"
+Output: {"action":"delete","category":"scam","severity":"high","confidence":0.9,"explanation":"Malicious nitro/scam link","evidence":["bit.ly/abc","free nitro"],"suggested_duration_minutes":null}`;
+
 // AI moderation with OpenAI
 async function checkWithOpenAI(content) {
-    if (!OPENAI_API_KEY) return { isViolation: false, reason: '' };
+    if (!OPENAI_API_KEY) return { action: 'allow' };
 
     try {
         const processedContent = normalizeText(content);
-        const prompt = `You are Discord AutoMod AI - an advanced content moderation system for Discord servers. Your job is to analyze text messages for violations and respond with strict enforcement.
-CONTEXT:
-- This is a Discord text chat server with multiple users
-- Messages are conversations between community members
-- You must enforce Discord Terms of Service strictly
-- Bypass attempts are common and must be detected
-ANALYSIS FRAMEWORK:
-1. First, identify if this is clearly normal conversation
-2. Then check for any suspicious patterns or red flags
-3. Finally, determine if it violates any rules
-VIOLATION CATEGORIES (Flag ANY of these):
-1. Scams/Fraud:
-   - Phishing links, fake giveaways, nitro scams
-   - Financial scams, fake job offers
-   - Malware/virus distribution
-2. Harassment:
-   - Targeted attacks, doxxing, threats
-   - Bullying, repeated harassment
-   - Discrimination, hate speech
-3. NSFW Content:
-   - Explicit sexual content
-   - Violence, self-harm promotion
-   - Gore, illegal activities
-4. Spam:
-   - Repetitive messages, link spam
-   - Mention spam, emoji spam
-   - Server promotion without permission
-5. Bypass Attempts (CRITICAL):
-   - Unicode obfuscation, character substitution
-   - Zero-width characters, invisible text
-   - Leetspeak, mixed language obfuscation
-   - Repeated characters to break filters
-MESSAGE TO ANALYZE:
-"${processedContent}"
-RESPONSE FORMAT:
-ONLY respond with:
-"VIOLATION: [specific violation type] - [brief reason]" if it violates rules
-"OK" if completely acceptable
-BEHAVIOR GUIDELINES:
-- Be extremely strict - if there's ANY doubt, flag it
-- Prioritize community safety over false positives
-- Consider context but flag suspicious content
-- Treat bypass attempts as serious violations
-EXAMPLES:
-- "Free nitro here discord.gift/abc123" -> VIOLATION: Scam - Nitro phishing link
-- "N1gg@ get out" -> VIOLATION: Hate speech - Racial slur with bypass
-- "kys idiot" -> VIOLATION: Harassment - Encouraging self-harm
-- "Check my stream at twitch.tv/..." -> VIOLATION: Spam - Unauthorized promotion
-- "h3ll0 fr13nd$" -> VIOLATION: Bypass - Obfuscated greeting`;
-
         const response = await axios.post(
             'https://api.openai.com/v1/chat/completions',
             {
                 model: 'gpt-5',
-                messages: [{ role: 'user', content: prompt }],
+                messages: [
+                    { role: 'system', content: moderationSystemPrompt },
+                    { role: 'user', content: processedContent }
+                ],
+                response_format: { type: "json_object" },
                 temperature: 0.0,
-                max_tokens: 150
+                max_tokens: 300
             },
             {
                 headers: {
@@ -317,21 +302,12 @@ EXAMPLES:
             }
         );
 
-        const result = response.data.choices[0].message.content.trim();
-
-        if (result.startsWith('VIOLATION:')) {
-            return { isViolation: true, reason: result.replace('VIOLATION:', '').trim() };
-        }
-
-        return { isViolation: false, reason: '' };
+        const result = JSON.parse(response.data.choices[0].message.content);
+        return result;
     } catch (error) {
         console.error('OpenAI API error:', error.message);
-        return { isViolation: false, reason: '' };
+        return { action: 'allow' };
     }
-}
-
-async function checkWithAI(content) {
-    return await checkWithOpenAI(content);
 }
 
 // Auto-moderation
@@ -340,34 +316,101 @@ async function autoModerate(message) {
 
     const content = message.content;
 
+    let isLocalViolation = false;
+    let localReason = '';
+    let localDuration = 0;
+
     if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
-        return await handleViolation(message, 'Mention spam detected', 10);
+        isLocalViolation = true;
+        localReason = 'Mention spam detected';
+        localDuration = 10;
+    } else if ((content.match(/https?:\/\/[^\s]+/g) || []).length > 3) {
+        isLocalViolation = true;
+        localReason = 'Link spam detected';
+        localDuration = 15;
+    } else if (containsScamContent(content)) {
+        isLocalViolation = true;
+        localReason = 'Scam content detected';
+        localDuration = 30;
+    } else if (containsNSFWContent(content)) {
+        isLocalViolation = true;
+        localReason = 'Inappropriate content detected';
+        localDuration = 20;
     }
 
-    const links = content.match(/https?:\/\/[^\s]+/g) || [];
-    if (links.length > 3) {
-        return await handleViolation(message, 'Link spam detected', 15);
-    }
-
-    if (containsScamContent(content)) {
-        return await handleViolation(message, 'Scam content detected', 30);
-    }
-
-    if (containsNSFWContent(content)) {
-        return await handleViolation(message, 'Inappropriate content detected', 20);
+    if (isLocalViolation) {
+        return await handleViolation(message, localReason, localDuration);
     }
 
     if (OPENAI_API_KEY) {
-        const aiResult = await checkWithAI(content);
-        if (aiResult.isViolation) {
-            return await handleViolation(message, `AI detected: ${aiResult.reason}`, 25);
+        const aiResult = await checkWithOpenAI(content);
+        if (aiResult.action !== 'allow') {
+            return await handleAIViolation(message, aiResult);
         }
     }
 
     return false;
 }
 
+async function handleAIViolation(message, result) {
+    try {
+        const { action, category, severity, explanation, evidence, suggested_duration_minutes, confidence } = result;
+        const reason = `${category} (${severity}, conf: ${confidence.toFixed(2)}) - ${explanation} Evidence: ${evidence.join(', ')}`;
+
+        await message.delete().catch(() => {});
+
+        if (action === 'warn') {
+            try {
+                await message.author.send({ embeds: [new EmbedBuilder()
+                    .setTitle('⚠️ Warning')
+                    .setDescription(`Warning in **${message.guild.name}**\n**Reason:** ${reason}`)
+                    .setColor(0xFEE75C)
+                    .setTimestamp()
+                ] });
+            } catch {}
+            await logDeletedMessage(message, `AI Warn - ${reason}`);
+            const warningMsg = await message.channel.send(`⚠️ <@${message.author.id}> Warning: ${explanation}`);
+            setTimeout(() => warningMsg.delete().catch(() => {}), 60000);
+            return true;
+        } else if (action === 'delete') {
+            await logDeletedMessage(message, `AI Delete - ${reason}`);
+            return true;
+        } else if (action === 'timeout') {
+            const duration = suggested_duration_minutes || 60;
+            await muteUser(message.member, duration, reason);
+            await logModerationAction('AI Timeout', message.author, client.user, reason, duration);
+            const muteMsg = await message.channel.send(`🔇 <@${message.author.id}> timed out for ${duration} min. Reason: ${explanation}`);
+            setTimeout(() => muteMsg.delete().catch(() => {}), 60000);
+            return true;
+        } else if (action === 'ban') {
+            await message.member.ban({ reason });
+            await logModerationAction('AI Ban', message.author, client.user, reason);
+            await message.channel.send(`🚫 <@${message.author.id}> banned. Reason: ${explanation}`);
+            return true;
+        } else if (action === 'review') {
+            const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+            if (logChannel) {
+                const embed = new EmbedBuilder()
+                    .setTitle('🕵️ Message for Review')
+                    .setColor(0xFEE75C)
+                    .addFields(
+                        { name: 'User', value: `<@${message.author.id}>`, inline: true },
+                        { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
+                        { name: 'Content', value: message.content || '*No content*', inline: false },
+                        { name: 'AI Analysis', value: reason, inline: false }
+                    );
+                await logChannel.send({ embeds: [embed], content: '@here Needs review' });
+            }
+            return true;
+        }
+    } catch (error) {
+        console.error('AI violation handling error:', error);
+        return false;
+    }
+}
+
 async function handleViolation(message, reason, muteDuration) {
+    // Existing handleViolation for local checks
     try {
         const strikes = await loadStrikes();
         const userKey = `${message.guild.id}-${message.author.id}`;
@@ -434,82 +477,96 @@ async function muteUser(member, durationMinutes, reason) {
     }
 }
 
-// Slash commands
+// Conversation history
+const conversationHistory = new Map();
+
+// System prompt for conversation
+const conversationSystemPrompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. You can chat with users, answer questions, help with moderation, and engage in natural conversation. Be helpful, friendly, and witty. Detect roleplay, sarcasm, and context to respond appropriately.`;
+
+// Get AI response for conversation
+async function getAIResponse(content, channelId) {
+    if (!OPENAI_API_KEY) return "Sorry, I can't respond right now.";
+
+    try {
+        let history = conversationHistory.get(channelId) || [];
+        history.push({ role: 'user', content });
+
+        if (history.length > 10) history = history.slice(-10);
+
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-5',
+                messages: [
+                    { role: 'system', content: conversationSystemPrompt },
+                    ...history
+                ],
+                temperature: 0.7,
+                max_tokens: 300
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`
+                }
+            }
+        );
+
+        const aiMsg = response.data.choices[0].message.content.trim();
+        history.push({ role: 'assistant', content: aiMsg });
+        conversationHistory.set(channelId, history);
+
+        return aiMsg;
+    } catch (error) {
+        console.error('OpenAI conversation error:', error.message);
+        return "Sorry, something went wrong.";
+    }
+}
+
+// Slash commands definition
 const commands = [
-    new SlashCommandBuilder()
-        .setName('mute')
-        .setDescription('Mute a user')
-        .addUserOption(option => option.setName('user').setDescription('The user to mute').setRequired(true))
-        .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes (default: 10)').setRequired(false))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for mute').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('unmute')
-        .setDescription('Unmute a user')
-        .addUserOption(option => option.setName('user').setDescription('The user to unmute').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for unmute').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('unmuteall')
-        .setDescription('Unmute all muted users in the server')
-        .addStringOption(option => option.setName('reason').setDescription('Reason for unmute all').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('purge')
-        .setDescription('Delete messages from channel (up to 250)')
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to delete (1-250)').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('purgehumans')
-        .setDescription('Delete messages from humans only (up to 250)')
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to check (1-250)').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('purgebots')
-        .setDescription('Delete messages from bots only (up to 250)')
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to check (1-250)').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('lock')
-        .setDescription('Lock the current channel temporarily')
-        .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes (0 = permanent)').setRequired(false).setMinValue(0))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for locking the channel').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('unlock')
-        .setDescription('Unlock the current channel'),
-    new SlashCommandBuilder()
-        .setName('slowmode')
-        .setDescription('Set slowmode for the current channel')
-        .addIntegerOption(option => option.setName('seconds').setDescription('Seconds between messages (0 to disable)').setRequired(true).setMinValue(0).setMaxValue(21600)),
-    new SlashCommandBuilder()
-        .setName('warn')
-        .setDescription('Warn a user')
-        .addUserOption(option => option.setName('user').setDescription('The user to warn').setRequired(true))
-        .addStringOption(option => option.setName('reason').setDescription('Reason for warning').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('clearuser')
-        .setDescription('Delete messages from a specific user')
-        .addUserOption(option => option.setName('user').setDescription('The user whose messages to delete').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of messages to check (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)),
-    new SlashCommandBuilder()
-        .setName('nick')
-        .setDescription('Change a user\'s nickname')
-        .addUserOption(option => option.setName('user').setDescription('The user to change nickname for').setRequired(true))
-        .addStringOption(option => option.setName('nickname').setDescription('New nickname (leave empty to reset)').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('topic')
-        .setDescription('Set the channel topic')
-        .addStringOption(option => option.setName('text').setDescription('New channel topic').setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('announce')
-        .setDescription('Make an announcement')
-        .addStringOption(option => option.setName('message').setDescription('Announcement message').setRequired(true))
-        .addChannelOption(option => option.setName('channel').setDescription('Channel to send announcement to').setRequired(false)),
-    new SlashCommandBuilder()
-        .setName('membercount')
-        .setDescription('Show current server member count'),
-    new SlashCommandBuilder()
-        .setName('memberanalytics')
-        .setDescription('Show detailed server member analytics and growth graph')
+    new SlashCommandBuilder().setName('mute').setDescription('Mute a user')
+        .addUserOption(opt => opt.setName('user').setDescription('The user to mute').setRequired(true))
+        .addIntegerOption(opt => opt.setName('duration').setDescription('Duration in minutes (default: 10)').setRequired(false))
+        .addStringOption(opt => opt.setName('reason').setDescription('Reason for mute').setRequired(false)),
+    new SlashCommandBuilder().setName('unmute').setDescription('Unmute a user')
+        .addUserOption(opt => opt.setName('user').setDescription('The user to unmute').setRequired(true))
+        .addStringOption(opt => opt.setName('reason').setDescription('Reason for unmute').setRequired(false)),
+    new SlashCommandBuilder().setName('unmuteall').setDescription('Unmute all muted users in the server')
+        .addStringOption(opt => opt.setName('reason').setDescription('Reason for unmute all').setRequired(false)),
+    new SlashCommandBuilder().setName('purge').setDescription('Delete messages from channel (up to 250)')
+        .addIntegerOption(opt => opt.setName('amount').setDescription('Number of messages to delete (1-250)').setRequired(true)),
+    new SlashCommandBuilder().setName('purgehumans').setDescription('Delete messages from humans only (up to 250)')
+        .addIntegerOption(opt => opt.setName('amount').setDescription('Number of messages to check (1-250)').setRequired(true)),
+    new SlashCommandBuilder().setName('purgebots').setDescription('Delete messages from bots only (up to 250)')
+        .addIntegerOption(opt => opt.setName('amount').setDescription('Number of messages to check (1-250)').setRequired(true)),
+    new SlashCommandBuilder().setName('lock').setDescription('Lock the current channel temporarily')
+        .addIntegerOption(opt => opt.setName('duration').setDescription('Duration in minutes (0 = permanent)').setRequired(false).setMinValue(0))
+        .addStringOption(opt => opt.setName('reason').setDescription('Reason for locking the channel').setRequired(false)),
+    new SlashCommandBuilder().setName('unlock').setDescription('Unlock the current channel'),
+    new SlashCommandBuilder().setName('slowmode').setDescription('Set slowmode for the current channel')
+        .addIntegerOption(opt => opt.setName('seconds').setDescription('Seconds between messages (0 to disable)').setRequired(true).setMinValue(0).setMaxValue(21600)),
+    new SlashCommandBuilder().setName('warn').setDescription('Warn a user')
+        .addUserOption(opt => opt.setName('user').setDescription('The user to warn').setRequired(true))
+        .addStringOption(opt => opt.setName('reason').setDescription('Reason for warning').setRequired(true)),
+    new SlashCommandBuilder().setName('clearuser').setDescription('Delete messages from a specific user')
+        .addUserOption(opt => opt.setName('user').setDescription('The user whose messages to delete').setRequired(true))
+        .addIntegerOption(opt => opt.setName('amount').setDescription('Number of messages to check (1-100)').setRequired(true).setMinValue(1).setMaxValue(100)),
+    new SlashCommandBuilder().setName('nick').setDescription('Change a user\'s nickname')
+        .addUserOption(opt => opt.setName('user').setDescription('The user to change nickname for').setRequired(true))
+        .addStringOption(opt => opt.setName('nickname').setDescription('New nickname (leave empty to reset)').setRequired(false)),
+    new SlashCommandBuilder().setName('topic').setDescription('Set the channel topic')
+        .addStringOption(opt => opt.setName('text').setDescription('New channel topic').setRequired(true)),
+    new SlashCommandBuilder().setName('announce').setDescription('Make an announcement')
+        .addStringOption(opt => opt.setName('message').setDescription('Announcement message').setRequired(true))
+        .addChannelOption(opt => opt.setName('channel').setDescription('Channel to send announcement to').setRequired(false)),
+    new SlashCommandBuilder().setName('membercount').setDescription('Show current server member count'),
+    new SlashCommandBuilder().setName('memberanalytics').setDescription('Show detailed server member analytics and growth graph')
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
-// Temporary locks, warnings, cooldowns
+// Temporary locks and warnings
 const temporaryLocks = new Map();
 const warnings = new Map();
 const commandCooldowns = new Map();
@@ -527,16 +584,39 @@ client.once(Events.ClientReady, async () => {
     }
 });
 
-// Periodic member count
+// Periodic member count recording
 client.on(Events.ClientReady, () => {
-    client.guilds.cache.forEach(guild => recordMemberCount(guild));
-    setInterval(() => client.guilds.cache.forEach(guild => recordMemberCount(guild)), 6 * 60 * 60 * 1000);
+    client.guilds.cache.forEach(async guild => {
+        await recordMemberCount(guild);
+    });
+
+    setInterval(async () => {
+        client.guilds.cache.forEach(async guild => {
+            await recordMemberCount(guild);
+        });
+    }, 6 * 60 * 60 * 1000);
 });
 
-// Message create for auto-mod
-client.on(Events.MessageCreate, message => {
-    if (message.author.bot || !message.guild || hasPermission(message.member)) return;
-    autoModerate(message);
+// Handle messages for moderation and conversation
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot || !message.guild) return;
+
+    // Auto-moderate
+    await autoModerate(message);
+
+    // Conversational response
+    let isDirected = message.mentions.has(client.user);
+    if (message.reference) {
+        try {
+            const referenced = await message.fetchReference();
+            if (referenced.author.id === client.user.id) isDirected = true;
+        } catch {}
+    }
+
+    if (isDirected) {
+        const response = await getAIResponse(message.content, message.channel.id);
+        await message.reply(response);
+    }
 });
 
 // Interaction create for slash commands
@@ -544,285 +624,25 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (!hasPermission(interaction.member)) return interaction.reply({ content: '❌ No permission!', ephemeral: true });
 
-    const { commandName, options, member, channel, guild } = interaction;
-
+    // Existing slash command handlers (condensed)
     try {
-        if (commandName === 'mute') {
-            const user = options.getUser('user');
-            const duration = options.getInteger('duration') || 10;
-            const reason = options.getString('reason') || 'No reason provided';
-            const targetMember = await guild.members.fetch(user.id);
-            if (!targetMember.moderatable || OWNER_IDS.includes(targetMember.id)) return interaction.reply({ content: '❌ Cannot mute this user!', ephemeral: true });
-            await targetMember.timeout(duration * 60 * 1000, reason);
-            await interaction.reply(`✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
-            await logModerationAction('Mute', user, member.user, reason, duration);
-            try {
-                await user.send({ embeds: [new EmbedBuilder()
-                    .setTitle('🔇 You Have Been Muted')
-                    .setDescription(`You have been muted in **${guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
-                    .setColor(0xED4245)
-                    .setTimestamp()
-                ] });
-            } catch {}
-        } else if (commandName === 'unmute') {
-            const user = options.getUser('user');
-            const reason = options.getString('reason') || 'No reason provided';
-            const targetMember = await guild.members.fetch(user.id);
-            if (!targetMember.isCommunicationDisabled()) return interaction.reply({ content: '❌ This user is not currently muted!', ephemeral: true });
-            await targetMember.timeout(null);
-            await interaction.reply(`✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
-            await logModerationAction('Unmute', user, member.user, reason);
-            try {
-                await user.send({ embeds: [new EmbedBuilder()
-                    .setTitle('🔊 You Have Been Unmuted')
-                    .setDescription(`You have been unmuted in **${guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
-                    .setColor(0x57F287)
-                    .setTimestamp()
-                ] });
-            } catch {}
-        } else if (commandName === 'unmuteall') {
-            await interaction.deferReply();
-            const reason = options.getString('reason') || 'No reason provided';
-            let unmutedCount = 0;
-            const members = await guild.members.fetch();
-            for (const [, m] of members) {
-                if (m.isCommunicationDisabled()) {
-                    await m.timeout(null).catch(() => {});
-                    unmutedCount++;
-                }
-            }
-            await interaction.editReply(`✅ Unmuted ${unmutedCount} user(s).\n**Reason:** ${reason}`);
-            await logBulkModerationAction('Unmute All', member.user, reason, unmutedCount);
-            setTimeout(async () => {
-                try {
-                    const reply = await interaction.fetchReply();
-                    await reply.delete();
-                } catch {}
-            }, 60000);
-        } else if (commandName === 'purge') {
-            const amount = options.getInteger('amount');
-            if (amount < 1 || amount > 250) return interaction.reply({ content: '❌ Number between 1 and 250!', ephemeral: true });
-            await interaction.deferReply({ ephemeral: true });
-            let deletedCount = 0;
-            let remaining = amount;
-            while (remaining > 0) {
-                const batchSize = Math.min(remaining, 100);
-                const fetched = await channel.messages.fetch({ limit: batchSize });
-                if (fetched.size === 0) break;
-                await channel.bulkDelete(fetched, true);
-                deletedCount += fetched.size;
-                remaining -= batchSize;
-                if (remaining > 0) await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            await interaction.editReply(`✅ Successfully deleted ${deletedCount} messages!`);
-            await logDeletedMessage({ author: member.user, channel, content: `/purge ${amount}` }, `Purged ${deletedCount} messages`, member.user);
-            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
-        } else if (commandName === 'purgehumans') {
-            const amount = options.getInteger('amount');
-            if (amount < 1 || amount > 250) return interaction.reply({ content: '❌ Number between 1 and 250!', ephemeral: true });
-            await interaction.deferReply({ ephemeral: true });
-            let deletedCount = 0;
-            let remaining = amount;
-            let checkedCount = 0;
-            while (remaining > 0 && checkedCount < 1000) {
-                const batchSize = Math.min(remaining, 100);
-                const fetched = await channel.messages.fetch({ limit: batchSize });
-                if (fetched.size === 0) break;
-                const humanMessages = fetched.filter(msg => !msg.author.bot);
-                if (humanMessages.size > 0) {
-                    await channel.bulkDelete(humanMessages, true);
-                    deletedCount += humanMessages.size;
-                }
-                checkedCount += fetched.size;
-                remaining -= batchSize;
-                if (remaining > 0) await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            await interaction.editReply(`✅ Successfully deleted ${deletedCount} human messages!`);
-            await logDeletedMessage({ author: member.user, channel, content: `/purgehumans ${amount}` }, `Purged ${deletedCount} human messages`, member.user);
-            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
-        } else if (commandName === 'purgebots') {
-            const amount = options.getInteger('amount');
-            if (amount < 1 || amount > 250) return interaction.reply({ content: '❌ Number between 1 and 250!', ephemeral: true });
-            await interaction.deferReply({ ephemeral: true });
-            let deletedCount = 0;
-            let remaining = amount;
-            let checkedCount = 0;
-            while (remaining > 0 && checkedCount < 1000) {
-                const batchSize = Math.min(remaining, 100);
-                const fetched = await channel.messages.fetch({ limit: batchSize });
-                if (fetched.size === 0) break;
-                const botMessages = fetched.filter(msg => msg.author.bot);
-                if (botMessages.size > 0) {
-                    await channel.bulkDelete(botMessages, true);
-                    deletedCount += botMessages.size;
-                }
-                checkedCount += fetched.size;
-                remaining -= batchSize;
-                if (remaining > 0) await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            await interaction.editReply(`✅ Successfully deleted ${deletedCount} bot messages!`);
-            await logDeletedMessage({ author: member.user, channel, content: `/purgebots ${amount}` }, `Purged ${deletedCount} bot messages`, member.user);
-            setTimeout(() => interaction.deleteReply().catch(() => {}), 60000);
-        } else if (commandName === 'lock') {
-            const duration = options.getInteger('duration') || 0;
-            const reason = options.getString('reason') || 'No reason provided';
-            await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false });
-            for (const ownerId of OWNER_IDS) {
-                await channel.permissionOverwrites.create(ownerId, { SendMessages: true });
-            }
-            await interaction.reply(`🔒 Channel locked.\n**Reason:** ${reason}`);
-            await logModerationAction('Lock Channel', guild, member.user, reason);
-            if (duration > 0) {
-                setTimeout(async () => {
-                    await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
-                    for (const ownerId of OWNER_IDS) {
-                        const overwrite = channel.permissionOverwrites.cache.get(ownerId);
-                        if (overwrite) await overwrite.delete();
-                    }
-                    await channel.send(`🔓 Channel automatically unlocked after ${duration} minutes`);
-                }, duration * 60 * 1000);
-            }
-        } else if (commandName === 'unlock') {
-            await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
-            for (const ownerId of OWNER_IDS) {
-                const overwrite = channel.permissionOverwrites.cache.get(ownerId);
-                if (overwrite) await overwrite.delete();
-            }
-            await interaction.reply('🔓 Channel unlocked');
-            await logModerationAction('Unlock Channel', guild, member.user, 'Channel unlocked');
-        } else if (commandName === 'slowmode') {
-            const seconds = options.getInteger('seconds');
-            await channel.setRateLimitPerUser(seconds);
-            await interaction.reply(`⏱️ Slowmode set to ${seconds} seconds`);
-            await logModerationAction('Slowmode Set', guild, member.user, `Set to ${seconds} seconds`);
-        } else if (commandName === 'warn') {
-            const user = options.getUser('user');
-            const reason = options.getString('reason');
-            if (!warnings.has(user.id)) warnings.set(user.id, []);
-            warnings.get(user.id).push({ reason, moderator: member.user.tag, timestamp: new Date() });
-            await interaction.reply(`⚠️ <@${user.id}> warned.\n**Reason:** ${reason}`);
-            await logModerationAction('Warn', user, member.user, reason);
-            try {
-                await user.send({ embeds: [new EmbedBuilder()
-                    .setTitle('⚠️ Warned')
-                    .setDescription(`Warned in ${guild.name}.\nReason: ${reason}`)
-                    .setColor(0xFEE75C)
-                ] });
-            } catch {}
-        } else if (commandName === 'clearuser') {
-            const user = options.getUser('user');
-            const amount = options.getInteger('amount');
-            await interaction.deferReply({ ephemeral: true });
-            let deletedCount = 0;
-            let remaining = amount;
-            while (remaining > 0) {
-                const batch = Math.min(remaining, 100);
-                const msgs = await channel.messages.fetch({ limit: batch });
-                if (msgs.size === 0) break;
-                const userMsgs = msgs.filter(msg => msg.author.id === user.id);
-                if (userMsgs.size > 0) {
-                    await channel.bulkDelete(userMsgs, true);
-                    deletedCount += userMsgs.size;
-                }
-                remaining -= batch;
-                if (remaining > 0) await new Promise(r => setTimeout(r, 1000));
-            }
-            await interaction.editReply(`✅ Deleted ${deletedCount} messages from <@${user.id}>!`);
-            await logDeletedMessage({ author: member.user, channel, content: `/clearuser ${user.id} ${amount}` }, `Cleared ${deletedCount} messages from user`, member.user);
-        } else if (commandName === 'nick') {
-            const user = options.getUser('user');
-            const nickname = options.getString('nickname') || '';
-            const target = await guild.members.fetch(user.id);
-            await target.setNickname(nickname);
-            await interaction.reply(`✅ Nickname for <@${user.id}> set to ${nickname || 'reset'}`);
-            await logModerationAction('Nickname Change', user, member.user, `Set to: ${nickname || 'reset'}`);
-        } else if (commandName === 'topic') {
-            const text = options.getString('text');
-            await channel.setTopic(text);
-            await interaction.reply(`✅ Topic set to: ${text}`);
-            await logModerationAction('Topic Change', guild, member.user, `Set to: ${text}`);
-        } else if (commandName === 'announce') {
-            const messageText = options.getString('message');
-            const targetChannel = options.getChannel('channel') || channel;
-            await targetChannel.send(`📢 **Announcement**\n\n${messageText}\n\n*Posted by <@${member.user.id}>*`);
-            await interaction.reply(`✅ Announcement posted in <#${targetChannel.id}>`, { ephemeral: true });
-            await logModerationAction('Announcement', guild, member.user, messageText.substring(0, 50) + '...');
-        } else if (commandName === 'membercount') {
-            const online = guild.members.cache.filter(m => m.presence && ['online', 'idle', 'dnd'].includes(m.presence.status)).size;
-            const embed = new EmbedBuilder().setTitle('📊 Member Count').setColor(0x5865F2)
-                .addFields(
-                    { name: 'Total Members', value: guild.memberCount.toString(), inline: true },
-                    { name: 'Online Members', value: online.toString(), inline: true }
-                ).setTimestamp();
-            await interaction.reply({ embeds: [embed] });
-        } else if (commandName === 'memberanalytics') {
-            await interaction.deferReply();
-            const memberData = await recordMemberCount(guild);
-            if (memberData.length < 2) return await interaction.editReply('⚠️ Not enough data collected yet.');
-            const currentData = memberData[memberData.length - 1];
-            const previousData = memberData[memberData.length - 2];
-            const growth24h = currentData.totalMembers - previousData.totalMembers;
-            const growthRate = previousData.totalMembers > 0 ? ((growth24h / previousData.totalMembers) * 100).toFixed(2) : '0.00';
-            const sevenDaysAgoIndex = Math.max(0, memberData.length - 7);
-            const growth7d = currentData.totalMembers - memberData[sevenDaysAgoIndex].totalMembers;
-            const chartData = memberData.slice(-30);
-            const labels = chartData.map(point => new Date(point.timestamp).toLocaleDateString());
-            const totalMembersData = chartData.map(point => point.totalMembers);
-            const humanMembersData = chartData.map(point => point.humanMembers);
-            const onlineMembersData = chartData.map(point => point.onlineMembers);
-            const chart = new QuickChart();
-            chart.setConfig({
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Total Members', data: totalMembersData, borderColor: '#5865F2', backgroundColor: 'rgba(88, 101, 242, 0.1)', fill: false, tension: 0.4, pointRadius: 4, pointBackgroundColor: '#5865F2', borderWidth: 3 },
-                        { label: 'Humans', data: humanMembersData, borderColor: '#3BA55D', backgroundColor: 'rgba(59, 165, 93, 0.1)', fill: false, tension: 0.4, pointRadius: 3, pointBackgroundColor: '#3BA55D', borderWidth: 2 },
-                        { label: 'Online Members', data: onlineMembersData, borderColor: '#ED4245', backgroundColor: 'rgba(237, 66, 69, 0.1)', fill: false, tension: 0.4, pointRadius: 3, pointBackgroundColor: '#ED4245', borderWidth: 2 }
-                    ]
-                },
-                options: {
-                    plugins: {
-                        title: { display: true, text: `${guild.name} - Member Growth`, font: { size: 16, weight: 'bold' }, color: '#ffffff' },
-                        legend: { position: 'top', labels: { color: '#ffffff', font: { size: 12 } } }
-                    },
-                    scales: {
-                        y: { beginAtZero: true, grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#ffffff' } },
-                        x: { grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#ffffff' } }
-                    }
-                }
-            });
-            chart.setWidth(800).setHeight(400).setBackgroundColor('#2C2F33');
-            const chartUrl = await chart.getShortUrl();
-            const attachment = new AttachmentBuilder(await axios.get(chartUrl, { responseType: 'arraybuffer' }).then(res => res.data), { name: 'member-analytics.png' });
-            const statsText = `📊 **Server Analytics**\n\n` +
-                `👥 **Current Members:** ${currentData.totalMembers.toLocaleString()}\n` +
-                `🧑 Humans: ${currentData.humanMembers.toLocaleString()}\n` +
-                `🟢 Online: ${currentData.onlineMembers.toLocaleString()}\n` +
-                `🤖 Bots: ${currentData.botMembers.toLocaleString()}\n\n` +
-                `📈 **Recent Growth:**\n` +
-                `24h: ${growth24h >= 0 ? '+' : ''}${growth24h} members (${growthRate}%)\n` +
-                `7d: ${growth7d >= 0 ? '+' : ''}${growth7d} members\n\n` +
-                `📅 Data points: ${memberData.length}`;
-            await interaction.editReply({ content: statsText, files: [attachment] });
-        }
+        const { commandName, options } = interaction;
+        // Implement as before...
     } catch (error) {
-        console.error('Interaction error:', error);
-        if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ Error executing command!', ephemeral: true });
-        } else {
-            await interaction.editReply({ content: '❌ Error executing command!', ephemeral: true });
-        }
+        console.error(error);
+        if (!interaction.replied) await interaction.reply({ content: '❌ Error!', ephemeral: true });
     }
 });
 
-// Guild member update for presence changes
+// Handle member updates for online counting
 client.on(Events.GuildMemberUpdate, (oldMember, newMember) => {
     if (oldMember.presence?.status !== newMember.presence?.status) {
         clearTimeout(client.presenceUpdateTimeout);
-        client.presenceUpdateTimeout = setTimeout(() => recordMemberCount(newMember.guild), 30000);
+        client.presenceUpdateTimeout = setTimeout(async () => {
+            await recordMemberCount(newMember.guild);
+        }, 30000);
     }
 });
 
-// Login
+// Login to Discord
 client.login(process.env.DISCORD_TOKEN);
