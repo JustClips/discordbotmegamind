@@ -46,6 +46,19 @@ const commands = [
                 .setDescription('Reason for mute')
                 .setRequired(false)),
 
+    // Unmute command
+    new SlashCommandBuilder()
+        .setName('unmute')
+        .setDescription('Unmute a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('The user to unmute')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for unmute')
+                .setRequired(false)),
+
     // Purge all messages (up to 250)
     new SlashCommandBuilder()
         .setName('purge')
@@ -96,7 +109,7 @@ const commands = [
                 .setDescription('Seconds between messages (0 to disable)')
                 .setRequired(true)
                 .setMinValue(0)
-                .setMaxValue(21600)) // 6 hours max
+                .setMaxValue(21600))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -170,14 +183,59 @@ client.on(Events.InteractionCreate, async interaction => {
             await targetMember.timeout(muteDuration, reason);
             
             await interaction.reply({
-                content: `✅ ${user.tag} has been muted for ${duration} minutes.\n**Reason:** ${reason}`
+                content: `✅ ${user.tag} has been muted for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** ${member.user.tag}`
             });
 
-            // Send DM to user
+            // Send DM to user with moderator info
             try {
-                await user.send(`You have been muted in ${interaction.guild.name} for ${duration} minutes.\n**Reason:** ${reason}`);
+                await user.send(`You have been muted in ${interaction.guild.name} for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** ${member.user.tag}`);
             } catch (error) {
                 console.log('Could not send DM to user');
+            }
+        }
+
+        // Unmute command
+        else if (commandName === 'unmute') {
+            const user = options.getUser('user');
+            const reason = options.getString('reason') || 'No reason provided';
+            
+            const targetMember = await interaction.guild.members.fetch(user.id);
+            
+            if (!targetMember) {
+                return await interaction.reply({
+                    content: '❌ User not found!',
+                    ephemeral: true
+                });
+            }
+
+            // Check if user is currently muted
+            if (!targetMember.isCommunicationDisabled()) {
+                return await interaction.reply({
+                    content: '❌ This user is not currently muted!',
+                    ephemeral: true
+                });
+            }
+
+            try {
+                // Remove timeout
+                await targetMember.timeout(null);
+                
+                await interaction.reply({
+                    content: `✅ ${user.tag} has been unmuted.\n**Reason:** ${reason}\n**Moderator:** ${member.user.tag}`
+                });
+
+                // Send DM to user with moderator info
+                try {
+                    await user.send(`You have been unmuted in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Moderator:** ${member.user.tag}`);
+                } catch (error) {
+                    console.log('Could not send DM to user');
+                }
+            } catch (error) {
+                console.error('Unmute error:', error);
+                await interaction.reply({
+                    content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
+                    ephemeral: true
+                });
             }
         }
 
