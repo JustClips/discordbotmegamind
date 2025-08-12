@@ -2,11 +2,16 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const QuickChart = require('quickchart-js');
 const fs = require('fs').promises;
+const OpenAI = require('openai');
 
 // Configuration - Using environment variable for OWNER_IDS
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
 const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// Initialize OpenAI client
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 // Create a new client instance
 const client = new Client({ 
@@ -228,6 +233,127 @@ async function learnFromConversation(message) {
     }
 }
 
+// Get AI response for conversation
+async function getAIResponse(conversationContext, userName) {
+    if (!openai) {
+        return "AI functionality is not configured. Please set OPENAI_API_KEY.";
+    }
+
+    try {
+        // Format conversation context for OpenAI
+        const messages = [
+            {
+                role: "system",
+                content: `You are AutoModAI, a helpful Discord bot and server moderator. 
+                You assist with server rules, answer questions, and help keep the server safe.
+                Be friendly, concise, and helpful. Current server: ${conversationContext.guildName || 'Unknown'}`
+            }
+        ];
+
+        // Add recent conversation context
+        conversationContext.messages.slice(-10).forEach(msg => {
+            if (msg.isBot) {
+                messages.push({ role: "assistant", content: msg.content });
+            } else {
+                messages.push({ role: "user", content: `${msg.username}: ${msg.content}` });
+            }
+        });
+
+        // Add current user's message
+        messages.push({ 
+            role: "user", 
+            content: `${userName}: ${conversationContext.currentMessage}` 
+        });
+
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: messages,
+            max_tokens: 200,
+            temperature: 0.7
+        });
+
+        return completion.choices[0].message.content.trim();
+    } catch (error) {
+        console.error('OpenAI API error:', error);
+        return "Sorry, I'm having trouble thinking right now. Please try again later!";
+    }
+}
+
+// Get AI moderation decision
+async function getAIModerationDecision(messageContent, contextMessages = [], authorName) {
+    if (!openai) {
+        return null;
+    }
+
+    try {
+        // Build context string
+        let contextString = "";
+        if (contextMessages.length > 0) {
+            contextString = "Recent conversation context:\n";
+            contextMessages.slice(-5).forEach(msg => {
+                contextString += `${msg.username}: ${msg.content}\n`;
+            });
+        }
+
+        const prompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
+
+OUTPUT RULES (MANDATORY)
+- Respond with exactly one JSON object and nothing else (no explanation outside JSON).
+- JSON schema:
+  {
+    "action": "allow" | "warn" | "delete" | "timeout" | "ban" | "review",
+    "category": "spam" | "scam" | "harassment" | "hate_speech" | "nsfw" | "dox" | "self_harm" | "illegal" | "other",
+    "severity": "low" | "medium" | "high",
+    "confidence": 0.00-1.00,
+    "explanation": "short human explanation (<=200 chars)",
+    "evidence": ["normalized fragments or matched tokens", ...],
+    "suggested_duration_minutes": null | integer
+  }
+
+DECISION GUIDELINES
+- Use full context if provided. If intent is ambiguous, return "review" (not "ban").
+- Do NOT base decisions only on keywords — assess intent, target, role relationships, and surrounding conversation.
+- If obfuscation detected, include the normalized text snippet(s) in "evidence".
+- If the content contains links or invites flagged as scams, set category "scam" and provide the link fragment in "evidence".
+- For harassment/hate/sex content set the correct category and a severity based on explicitness and target (targeted slur=high).
+- Confidence should reflect certainty: low (<0.6) when ambiguous, high (>0.85) when clear attack/scam.
+- Suggested durations: if action is "timeout" provide an integer; otherwise null.
+
+FORMAT & STYLE
+- Keep "explanation" short & human-like (e.g., "Targeted slur against an individual — removed to protect members.").
+- Provide only the JSON object, nothing else.
+
+Message to analyze: "${messageContent}"
+${contextString}
+Author: ${authorName}`;
+
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 300,
+            temperature: 0.1
+        });
+
+        const response = completion.choices[0].message.content.trim();
+        
+        // Try to parse the JSON response
+        try {
+            // Extract JSON from response if it contains other text
+            const jsonMatch = response.match(/\{.*\}/s);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            return JSON.parse(response);
+        } catch (parseError) {
+            console.error('Failed to parse AI moderation response:', response);
+            return null;
+        }
+    } catch (error) {
+        console.error('AI moderation error:', error);
+        return null;
+    }
+}
+
 // Record member count with proper online counting
 async function recordMemberCount(guild) {
     const now = new Date();
@@ -401,6 +527,18 @@ async function autoModerate(message) {
     // Learn from the conversation
     await learnFromConversation(message);
     
+    // Get conversation context for AI analysis
+    const context = await getConversationContext(message.channel.id);
+    
+    // Get AI moderation decision
+    const aiDecision = await getAIModerationDecision(content, context, message.author.username);
+    
+    // If AI provides a decision and it's not "allow", handle it
+    if (aiDecision && aiDecision.action !== "allow") {
+        return await handleAIModerationViolation(message, aiDecision);
+    }
+    
+    // Fallback to traditional moderation if AI doesn't provide decision
     // Check for spam (too many mentions)
     if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
         return await handleViolation(message, 'Mention spam detected', 10, 'spam');
@@ -425,7 +563,101 @@ async function autoModerate(message) {
     return false;
 }
 
-// Handle violations with strike system
+// Handle AI moderation violations
+async function handleAIModerationViolation(message, decision) {
+    try {
+        const strikes = await loadStrikes();
+        const userId = message.author.id;
+        const guildId = message.guild.id;
+        const userKey = `${guildId}-${userId}`;
+        
+        // Initialize strikes for user if not exists
+        if (!strikes[userKey]) {
+            strikes[userKey] = 0;
+        }
+        
+        let actionTaken = false;
+        
+        // Handle based on AI decision action
+        switch (decision.action) {
+            case "delete":
+                await message.delete().catch(() => {});
+                await logDeletedMessage(message, `[AI] ${decision.category} - ${decision.explanation}`);
+                actionTaken = true;
+                break;
+                
+            case "warn":
+                strikes[userKey] += 1;
+                await saveStrikes(strikes);
+                await message.delete().catch(() => {});
+                await logDeletedMessage(message, `[AI] Warning ${strikes[userKey]} [${decision.category}] - ${decision.explanation}`);
+                actionTaken = true;
+                break;
+                
+            case "timeout":
+                strikes[userKey] += 1;
+                await saveStrikes(strikes);
+                await muteUser(message.member, decision.suggested_duration_minutes || 10, decision.explanation);
+                await message.delete().catch(() => {});
+                await logDeletedMessage(message, `[AI] Strike ${strikes[userKey]} [${decision.category}] - Muted for ${decision.suggested_duration_minutes || 10} minutes - ${decision.explanation}`);
+                await logModerationAction('Mute (Auto)', message.author, client.user, decision.explanation, decision.suggested_duration_minutes || 10);
+                actionTaken = true;
+                break;
+                
+            case "ban":
+                // Note: We're not actually banning, just treating as severe timeout
+                strikes[userKey] += 2; // Double strike for ban-level offense
+                await saveStrikes(strikes);
+                await muteUser(message.member, decision.suggested_duration_minutes || 60, decision.explanation);
+                await message.delete().catch(() => {});
+                await logDeletedMessage(message, `[AI] Strike ${strikes[userKey]} [${decision.category}] - BAN LEVEL OFFENSE - Muted for ${decision.suggested_duration_minutes || 60} minutes - ${decision.explanation}`);
+                await logModerationAction('Mute (Auto - Ban Level)', message.author, client.user, decision.explanation, decision.suggested_duration_minutes || 60);
+                actionTaken = true;
+                break;
+                
+            case "review":
+                // Log for manual review but don't take action
+                console.log(`[AI REVIEW] Message needs manual review: ${message.content}`);
+                break;
+        }
+        
+        // Show temporary notification message if action was taken
+        if (actionTaken) {
+            let notificationMsg;
+            switch (decision.action) {
+                case "warn":
+                    notificationMsg = await message.channel.send({
+                        content: `⚠️ <@${message.author.id}> ${decision.explanation}\nThis is warning #${strikes[userKey]}.`
+                    });
+                    break;
+                case "timeout":
+                    notificationMsg = await message.channel.send({
+                        content: `🔇 <@${message.author.id}> has been muted for ${decision.suggested_duration_minutes || 10} minutes.\n**Reason:** ${decision.explanation}`
+                    });
+                    break;
+                case "ban":
+                    notificationMsg = await message.channel.send({
+                        content: `🚨 <@${message.author.id}> committed a severe violation.\n**Reason:** ${decision.explanation}\nThey have been muted for ${decision.suggested_duration_minutes || 60} minutes.`
+                    });
+                    break;
+            }
+            
+            // Delete notification after 1 minute
+            if (notificationMsg) {
+                setTimeout(() => {
+                    notificationMsg.delete().catch(() => {});
+                }, 60000);
+            }
+        }
+        
+        return actionTaken;
+    } catch (error) {
+        console.error('AI Violation handling error:', error);
+        return false;
+    }
+}
+
+// Handle violations with strike system (traditional)
 async function handleViolation(message, reason, muteDuration, category) {
     try {
         const strikes = await loadStrikes();
@@ -818,7 +1050,31 @@ client.on(Events.MessageCreate, async message => {
             });
         }
         
-        return message.reply('Hey there! I\'m AutoModAI, your friendly server moderator. I can help with rules, answer questions, and keep the server safe. Just ask!');
+        // Add to conversation context
+        const context = await addToConversationContext(
+            `dm_${message.author.id}`, 
+            message.author.id, 
+            message.author.username, 
+            message.content
+        );
+        
+        // Get AI response for DMs
+        if (openai) {
+            try {
+                const aiResponse = await getAIResponse({
+                    messages: context,
+                    currentMessage: message.content,
+                    guildName: 'Direct Message'
+                }, message.author.username);
+                
+                return message.reply(aiResponse);
+            } catch (error) {
+                console.error('DM AI response error:', error);
+                return message.reply('Hey there! I\'m AutoModAI, your friendly server moderator. I can help with rules, answer questions, and keep the server safe. Just ask!');
+            }
+        } else {
+            return message.reply('Hey there! I\'m AutoModAI, your friendly server moderator. I can help with rules, answer questions, and keep the server safe. Just ask!');
+        }
     }
     
     // Handle prefix commands in guilds
@@ -1286,22 +1542,67 @@ client.on(Events.MessageCreate, async message => {
         }
         
         // Add to conversation context
-        await addToConversationContext(message.channel.id, message.author.id, message.author.username, message.content);
+        const context = await addToConversationContext(
+            message.channel.id, 
+            message.author.id, 
+            message.author.username, 
+            message.content
+        );
         
-        // Simple response without AI
-        const responses = [
-            "I'm here to help! What can I do for you?",
-            "Hello there! How can I assist you today?",
-            "Hi! I'm listening. What do you need help with?",
-            "Hey! I'm AutoModAI. How can I be of service?",
-            "Greetings! What can I help you with?"
-        ];
-        
-        const response = responses[Math.floor(Math.random() * responses.length)];
-        await message.reply(response);
-        
-        // Add bot response to context
-        await addToConversationContext(message.channel.id, client.user.id, client.user.username, response, true);
+        // Get AI response if API key is configured
+        if (openai) {
+            try {
+                const aiResponse = await getAIResponse({
+                    messages: context,
+                    currentMessage: cleanContent,
+                    guildName: message.guild?.name
+                }, message.author.username);
+                
+                await message.reply(aiResponse);
+                
+                // Add bot response to context
+                await addToConversationContext(
+                    message.channel.id, 
+                    client.user.id, 
+                    client.user.username, 
+                    aiResponse, 
+                    true
+                );
+            } catch (error) {
+                console.error('AI response error:', error);
+                // Fallback to simple response
+                const responses = [
+                    "I'm here to help! What can I do for you?",
+                    "Hello there! How can I assist you today?",
+                    "Hi! I'm listening. What do you need help with?"
+                ];
+                const response = responses[Math.floor(Math.random() * responses.length)];
+                await message.reply(response);
+                await addToConversationContext(
+                    message.channel.id, 
+                    client.user.id, 
+                    client.user.username, 
+                    response, 
+                    true
+                );
+            }
+        } else {
+            // Fallback to simple responses if no API key
+            const responses = [
+                "I'm here to help! What can I do for you?",
+                "Hello there! How can I assist you today?",
+                "Hi! I'm listening. What do you need help with?"
+            ];
+            const response = responses[Math.floor(Math.random() * responses.length)];
+            await message.reply(response);
+            await addToConversationContext(
+                message.channel.id, 
+                client.user.id, 
+                client.user.username, 
+                response, 
+                true
+            );
+        }
         
         return;
     }
