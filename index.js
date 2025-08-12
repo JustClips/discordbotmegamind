@@ -175,6 +175,28 @@ async function logModerationAction(action, user, moderator, reason, duration = n
     }
 }
 
+// Log bulk moderation actions (for unmute all)
+async function logBulkModerationAction(action, moderator, reason, count) {
+    try {
+        const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+        if (!logChannel) return;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`🔨 ${action}`)
+            .setColor(0x57F287)
+            .addFields(
+                { name: 'Moderator', value: `<@${moderator.id}> (${moderator.tag})`, inline: true },
+                { name: 'Reason', value: reason, inline: true },
+                { name: 'Users Affected', value: count.toString(), inline: true }
+            )
+            .setTimestamp();
+            
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error logging bulk moderation action:', error);
+    }
+}
+
 // Auto-moderation patterns
 const scamLinks = [
     'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
@@ -445,6 +467,15 @@ const commands = [
         .addStringOption(option =>
             option.setName('reason')
                 .setDescription('Reason for unmute')
+                .setRequired(false)),
+
+    // Unmute all command
+    new SlashCommandBuilder()
+        .setName('unmuteall')
+        .setDescription('Unmute all muted users in the server')
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for unmute all')
                 .setRequired(false)),
 
     // Purge all messages (up to 250)
@@ -746,6 +777,39 @@ client.on(Events.MessageCreate, async message => {
             } catch (error) {
                 console.error('Unmute error:', error);
                 message.reply('❌ Failed to unmute the user.');
+            }
+        }
+        
+        else if (command === 'unmuteall') {
+            try {
+                const reason = args.join(' ') || 'No reason provided';
+                let unmutedCount = 0;
+                
+                // Get all members and unmute those who are timed out
+                const members = await message.guild.members.fetch();
+                for (const [id, member] of members) {
+                    if (member.isCommunicationDisabled()) {
+                        try {
+                            await member.timeout(null);
+                            unmutedCount++;
+                        } catch (error) {
+                            // Ignore errors for individual users
+                        }
+                    }
+                }
+                
+                const reply = await message.reply(`✅ Unmuted ${unmutedCount} user(s).\n**Reason:** ${reason}`);
+                
+                // Log action
+                await logBulkModerationAction('Unmute All', message.author, reason, unmutedCount);
+                
+                // Delete reply after 1 minute
+                setTimeout(() => {
+                    reply.delete().catch(() => {});
+                }, 60000);
+            } catch (error) {
+                console.error('Unmute all error:', error);
+                message.reply('❌ Failed to unmute all users.');
             }
         }
         
@@ -1120,6 +1184,54 @@ client.on(Events.InteractionCreate, async interaction => {
                 console.error('Unmute error:', error);
                 await interaction.reply({
                     content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Unmute all command
+        else if (commandName === 'unmuteall') {
+            await interaction.deferReply();
+            
+            try {
+                const reason = options.getString('reason') || 'No reason provided';
+                let unmutedCount = 0;
+                
+                // Get all members and unmute those who are timed out
+                const members = await interaction.guild.members.fetch();
+                for (const [id, member] of members) {
+                    if (member.isCommunicationDisabled()) {
+                        try {
+                            await member.timeout(null);
+                            unmutedCount++;
+                        } catch (error) {
+                            // Ignore errors for individual users
+                        }
+                    }
+                }
+                
+                await interaction.editReply({
+                    content: `✅ Unmuted ${unmutedCount} user(s).\n**Reason:** ${reason}`
+                });
+
+                // Log action
+                await logBulkModerationAction('Unmute All', member.user, reason, unmutedCount);
+                
+                // Delete the success message after 1 minute
+                setTimeout(async () => {
+                    try {
+                        const reply = await interaction.fetchReply();
+                        if (reply.deletable) {
+                            await reply.delete();
+                        }
+                    } catch (error) {
+                        console.error('Error deleting unmuteall reply:', error);
+                    }
+                }, 60000);
+            } catch (error) {
+                console.error('Unmute all error:', error);
+                await interaction.editReply({
+                    content: '❌ Failed to unmute all users.',
                     ephemeral: true
                 });
             }
