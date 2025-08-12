@@ -365,206 +365,32 @@ const commands = [
                 .addRoleOption(option => option.setName('role').setDescription('Role to add/remove'))
                 .addStringOption(option => option.setName('emoji').setDescription('Reaction emoji (add only)'))),
 
-    // Utility Commands
+    // User Information Commands
     new SlashCommandBuilder()
-        .setName('utility')
-        .setDescription('Utility commands')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('userinfo')
-                .setDescription('Get information about a user')
-                .addUserOption(option => option.setName('user').setDescription('User to get info for').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('serverinfo')
-                .setDescription('Get information about the server'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('avatar')
-                .setDescription('Get a user\'s avatar')
-                .addUserOption(option => option.setName('user').setDescription('User to get avatar for').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('ping')
-                .setDescription('Check bot latency'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('uptime')
-                .setDescription('Check bot uptime'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('stats')
-                .setDescription('Show bot statistics'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('channelinfo')
-                .setDescription('Get channel information')
-                .addChannelOption(option => option.setName('channel').setDescription('Channel to get info for').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('emoji')
-                .setDescription('Get emoji information')
-                .addStringOption(option => option.setName('emoji').setDescription('Emoji to get info for').setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('servericon')
-                .setDescription('Get server icon'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('banner')
-                .setDescription('Get server banner'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('inviteinfo')
-                .setDescription('Get invite information')
-                .addStringOption(option => option.setName('invite').setDescription('Invite code').setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('permissions')
-                .setDescription('Check user permissions')
-                .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false))
-                .addChannelOption(option => option.setName('channel').setDescription('Channel to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('permissionsfor')
-                .setDescription('Check permissions for a role')
-                .addRoleOption(option => option.setName('role').setDescription('Role to check').setRequired(true))
-                .addChannelOption(option => option.setName('channel').setDescription('Channel to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('auditlog')
-                .setDescription('View recent audit log entries')
-                .addIntegerOption(option => option.setName('limit').setDescription('Number of entries (1-100)').setRequired(false).setMinValue(1).setMaxValue(100)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('prune')
-                .setDescription('Prune inactive members')
-                .addIntegerOption(option => option.setName('days').setDescription('Days of inactivity').setRequired(true).setMinValue(1).setMaxValue(30))
-                .addRoleOption(option => option.setName('role').setDescription('Role to exclude').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('vanity')
-                .setDescription('Get vanity URL information'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('widget')
-                .setDescription('Get server widget information'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('features')
-                .setDescription('List server features'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('boosts')
-                .setDescription('View server boosts'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('emojilist')
-                .setDescription('List all server emojis'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('stickers')
-                .setDescription('List all server stickers'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('webhooks')
-                .setDescription('List channel webhooks')
-                .addChannelOption(option => option.setName('channel').setDescription('Channel to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('integrations')
-                .setDescription('List server integrations'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('templates')
-                .setDescription('List server templates'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('invites')
-                .setDescription('List server invites'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('bans')
-                .setDescription('List server bans'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('roles')
-                .setDescription('List user roles')
-                .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('permissionslist')
-                .setDescription('List all permissions')
-                .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('channelperms')
-                .setDescription('List channel permissions')
-                .addChannelOption(option => option.setName('channel').setDescription('Channel to check').setRequired(true))
-                .addRoleOption(option => option.setName('role').setDescription('Role to check').setRequired(false)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('voicestats')
-                .setDescription('View voice channel statistics'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('membercount')
-                .setDescription('Get member count information'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('onlinecount')
-                .setDescription('Get online member count'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('rolecount')
-                .setDescription('Get role member counts'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('channelcount')
-                .setDescription('Get channel counts'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('activity')
-                .setDescription('View recent server activity'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('joins')
-                .setDescription('View recent member joins'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('leaves')
-                .setDescription('View recent member leaves'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('messages')
-                .setDescription('View recent message statistics'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('reactions')
-                .setDescription('View recent reaction statistics'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('commands')
-                .setDescription('View command usage statistics'))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('logs')
-                .setDescription('View recent logs')
-                .addIntegerOption(option => option.setName('limit').setDescription('Number of logs (1-100)').setRequired(false).setMinValue(1).setMaxValue(100)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('export')
-                .setDescription('Export server data')
-                .addStringOption(option => 
-                    option.setName('type')
-                        .setDescription('Data type to export')
-                        .setRequired(true)
-                        .addChoices(
-                            { name: 'Members', value: 'members' },
-                            { name: 'Roles', value: 'roles' },
-                            { name: 'Channels', value: 'channels' },
-                            { name: 'Bans', value: 'bans' }
-                        ))),
+        .setName('userinfo')
+        .setDescription('Get information about a user')
+        .addUserOption(option => option.setName('user').setDescription('User to get info for').setRequired(false)),
+        
+    new SlashCommandBuilder()
+        .setName('serverinfo')
+        .setDescription('Get information about the server'),
+        
+    new SlashCommandBuilder()
+        .setName('avatar')
+        .setDescription('Get a user\'s avatar')
+        .addUserOption(option => option.setName('user').setDescription('User to get avatar for').setRequired(false)),
+        
+    new SlashCommandBuilder()
+        .setName('ping')
+        .setDescription('Check bot latency'),
+        
+    new SlashCommandBuilder()
+        .setName('uptime')
+        .setDescription('Check bot uptime'),
+        
+    new SlashCommandBuilder()
+        .setName('stats')
+        .setDescription('Show bot statistics'),
 
     // Fun Commands
     new SlashCommandBuilder()
@@ -1483,180 +1309,29 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
 
-    // Handle utility commands
-    if (commandName === 'utility') {
-        const subcommand = options.getSubcommand();
-        
-        switch (subcommand) {
-            case 'userinfo':
-                // Handle user info command
-                await interaction.reply({ content: 'User info command executed!', ephemeral: true });
-                break;
-            case 'serverinfo':
-                // Handle server info command
-                await interaction.reply({ content: 'Server info command executed!', ephemeral: true });
-                break;
-            case 'avatar':
-                // Handle avatar command
-                await interaction.reply({ content: 'Avatar command executed!', ephemeral: true });
-                break;
-            case 'ping':
-                // Handle ping command
-                await interaction.reply({ content: `Pong! Latency is ${Date.now() - interaction.createdTimestamp}ms`, ephemeral: true });
-                break;
-            case 'uptime':
-                // Handle uptime command
-                await interaction.reply({ content: 'Uptime command executed!', ephemeral: true });
-                break;
-            case 'stats':
-                // Handle stats command
-                await interaction.reply({ content: 'Stats command executed!', ephemeral: true });
-                break;
-            case 'channelinfo':
-                // Handle channel info command
-                await interaction.reply({ content: 'Channel info command executed!', ephemeral: true });
-                break;
-            case 'emoji':
-                // Handle emoji command
-                await interaction.reply({ content: 'Emoji command executed!', ephemeral: true });
-                break;
-            case 'servericon':
-                // Handle server icon command
-                await interaction.reply({ content: 'Server icon command executed!', ephemeral: true });
-                break;
-            case 'banner':
-                // Handle banner command
-                await interaction.reply({ content: 'Banner command executed!', ephemeral: true });
-                break;
-            case 'inviteinfo':
-                // Handle invite info command
-                await interaction.reply({ content: 'Invite info command executed!', ephemeral: true });
-                break;
-            case 'permissions':
-                // Handle permissions command
-                await interaction.reply({ content: 'Permissions command executed!', ephemeral: true });
-                break;
-            case 'permissionsfor':
-                // Handle permissions for command
-                await interaction.reply({ content: 'Permissions for command executed!', ephemeral: true });
-                break;
-            case 'auditlog':
-                // Handle audit log command
-                await interaction.reply({ content: 'Audit log command executed!', ephemeral: true });
-                break;
-            case 'prune':
-                // Handle prune command
-                await interaction.reply({ content: 'Prune command executed!', ephemeral: true });
-                break;
-            case 'vanity':
-                // Handle vanity command
-                await interaction.reply({ content: 'Vanity command executed!', ephemeral: true });
-                break;
-            case 'widget':
-                // Handle widget command
-                await interaction.reply({ content: 'Widget command executed!', ephemeral: true });
-                break;
-            case 'features':
-                // Handle features command
-                await interaction.reply({ content: 'Features command executed!', ephemeral: true });
-                break;
-            case 'boosts':
-                // Handle boosts command
-                await interaction.reply({ content: 'Boosts command executed!', ephemeral: true });
-                break;
-            case 'emojilist':
-                // Handle emoji list command
-                await interaction.reply({ content: 'Emoji list command executed!', ephemeral: true });
-                break;
-            case 'stickers':
-                // Handle stickers command
-                await interaction.reply({ content: 'Stickers command executed!', ephemeral: true });
-                break;
-            case 'webhooks':
-                // Handle webhooks command
-                await interaction.reply({ content: 'Webhooks command executed!', ephemeral: true });
-                break;
-            case 'integrations':
-                // Handle integrations command
-                await interaction.reply({ content: 'Integrations command executed!', ephemeral: true });
-                break;
-            case 'templates':
-                // Handle templates command
-                await interaction.reply({ content: 'Templates command executed!', ephemeral: true });
-                break;
-            case 'invites':
-                // Handle invites command
-                await interaction.reply({ content: 'Invites command executed!', ephemeral: true });
-                break;
-            case 'bans':
-                // Handle bans command
-                await interaction.reply({ content: 'Bans command executed!', ephemeral: true });
-                break;
-            case 'roles':
-                // Handle roles command
-                await interaction.reply({ content: 'Roles command executed!', ephemeral: true });
-                break;
-            case 'permissionslist':
-                // Handle permissions list command
-                await interaction.reply({ content: 'Permissions list command executed!', ephemeral: true });
-                break;
-            case 'channelperms':
-                // Handle channel permissions command
-                await interaction.reply({ content: 'Channel permissions command executed!', ephemeral: true });
-                break;
-            case 'voicestats':
-                // Handle voice stats command
-                await interaction.reply({ content: 'Voice stats command executed!', ephemeral: true });
-                break;
-            case 'membercount':
-                // Handle member count command
-                await interaction.reply({ content: 'Member count command executed!', ephemeral: true });
-                break;
-            case 'onlinecount':
-                // Handle online count command
-                await interaction.reply({ content: 'Online count command executed!', ephemeral: true });
-                break;
-            case 'rolecount':
-                // Handle role count command
-                await interaction.reply({ content: 'Role count command executed!', ephemeral: true });
-                break;
-            case 'channelcount':
-                // Handle channel count command
-                await interaction.reply({ content: 'Channel count command executed!', ephemeral: true });
-                break;
-            case 'activity':
-                // Handle activity command
-                await interaction.reply({ content: 'Activity command executed!', ephemeral: true });
-                break;
-            case 'joins':
-                // Handle joins command
-                await interaction.reply({ content: 'Joins command executed!', ephemeral: true });
-                break;
-            case 'leaves':
-                // Handle leaves command
-                await interaction.reply({ content: 'Leaves command executed!', ephemeral: true });
-                break;
-            case 'messages':
-                // Handle messages command
-                await interaction.reply({ content: 'Messages command executed!', ephemeral: true });
-                break;
-            case 'reactions':
-                // Handle reactions command
-                await interaction.reply({ content: 'Reactions command executed!', ephemeral: true });
-                break;
-            case 'commands':
-                // Handle commands command
-                await interaction.reply({ content: 'Commands command executed!', ephemeral: true });
-                break;
-            case 'logs':
-                // Handle logs command
-                await interaction.reply({ content: 'Logs command executed!', ephemeral: true });
-                break;
-            case 'export':
-                // Handle export command
-                await interaction.reply({ content: 'Export command executed!', ephemeral: true });
-                break;
-        }
+    // Handle user info commands
+    if (commandName === 'userinfo') {
+        await interaction.reply({ content: 'User info command executed!', ephemeral: true });
+    }
+    
+    if (commandName === 'serverinfo') {
+        await interaction.reply({ content: 'Server info command executed!', ephemeral: true });
+    }
+    
+    if (commandName === 'avatar') {
+        await interaction.reply({ content: 'Avatar command executed!', ephemeral: true });
+    }
+    
+    if (commandName === 'ping') {
+        await interaction.reply({ content: `Pong! Latency is ${Date.now() - interaction.createdTimestamp}ms`, ephemeral: true });
+    }
+    
+    if (commandName === 'uptime') {
+        await interaction.reply({ content: 'Uptime command executed!', ephemeral: true });
+    }
+    
+    if (commandName === 'stats') {
+        await interaction.reply({ content: 'Stats command executed!', ephemeral: true });
     }
 
     // Handle fun commands
