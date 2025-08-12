@@ -1,5 +1,7 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const QuickChart = require('quickchart-js');
+const fs = require('fs').promises;
 
 // Configuration
 const MOD_ROLE_ID = '1398413061169352949';
@@ -25,6 +27,63 @@ function hasPermission(member) {
     if (member.roles.cache.has(MOD_ROLE_ID)) return true;
     
     return false;
+}
+
+// Data file path
+const DATA_FILE = './memberData.json';
+
+// Load member data from file
+async function loadMemberData(guildId) {
+    try {
+        const data = await fs.readFile(DATA_FILE, 'utf8');
+        const allData = JSON.parse(data);
+        return allData[guildId] || [];
+    } catch (error) {
+        return [];
+    }
+}
+
+// Save member data to file
+async function saveMemberData(guildId, data) {
+    try {
+        let allData = {};
+        try {
+            const fileData = await fs.readFile(DATA_FILE, 'utf8');
+            allData = JSON.parse(fileData);
+        } catch (error) {
+            // File doesn't exist or is invalid, start fresh
+        }
+        
+        allData[guildId] = data;
+        await fs.writeFile(DATA_FILE, JSON.stringify(allData, null, 2));
+    } catch (error) {
+        console.error('Error saving member data:', error);
+    }
+}
+
+// Record member count
+async function recordMemberCount(guild) {
+    const now = new Date();
+    const dataPoint = {
+        timestamp: now.toISOString(),
+        totalMembers: guild.memberCount,
+        humanMembers: guild.members.cache.filter(m => !m.user.bot).size,
+        botMembers: guild.members.cache.filter(m => m.user.bot).size
+    };
+
+    const memberData = await loadMemberData(guild.id);
+    memberData.push(dataPoint);
+    
+    // Keep only last 30 days of data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const filteredData = memberData.filter(point => 
+        new Date(point.timestamp) > thirtyDaysAgo
+    );
+    
+    await saveMemberData(guild.id, filteredData);
+    return filteredData;
 }
 
 // Command definitions
@@ -202,7 +261,17 @@ const commands = [
         .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('Channel to send announcement to')
-                .setRequired(false))
+                .setRequired(false)),
+
+    // Member count command
+    new SlashCommandBuilder()
+        .setName('membercount')
+        .setDescription('Show current server member count'),
+
+    // Member analytics command
+    new SlashCommandBuilder()
+        .setName('memberanalytics')
+        .setDescription('Show detailed server member analytics and growth graph')
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -232,6 +301,21 @@ client.once(Events.ClientReady, async () => {
     } catch (error) {
         console.error(error);
     }
+});
+
+// Record member count when bot starts and every 6 hours
+client.on(Events.ClientReady, async () => {
+    // Record for all guilds
+    client.guilds.cache.forEach(async guild => {
+        await recordMemberCount(guild);
+    });
+    
+    // Set up interval to record every 6 hours
+    setInterval(async () => {
+        client.guilds.cache.forEach(async guild => {
+            await recordMemberCount(guild);
+        });
+    }, 6 * 60 * 60 * 1000); // 6 hours
 });
 
 // Handle interactions
@@ -883,6 +967,152 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.reply({
                     content: '❌ Failed to post announcement. I might not have permission to send messages in that channel.',
                     ephemeral: true
+                });
+            }
+        }
+
+        // Member count command
+        else if (commandName === 'membercount') {
+            const totalMembers = interaction.guild.memberCount;
+            const onlineMembers = interaction.guild.members.cache.filter(member => 
+                member.presence?.status === 'online' || 
+                member.presence?.status === 'idle' || 
+                member.presence?.status === 'dnd'
+            ).size;
+            const botMembers = interaction.guild.members.cache.filter(member => member.user.bot).size;
+            const humanMembers = totalMembers - botMembers;
+
+            await interaction.reply({
+                content: `📊 **Server Member Count**\n\n` +
+                         `👥 Total Members: ${totalMembers}\n` +
+                         `🧑 Humans: ${humanMembers}\n` +
+                         `🤖 Bots: ${botMembers}\n` +
+                         `🟢 Online: ${onlineMembers}`
+            });
+        }
+
+        // Member analytics command
+        else if (commandName === 'memberanalytics') {
+            await interaction.deferReply();
+
+            try {
+                // Record current data
+                const memberData = await recordMemberCount(interaction.guild);
+                
+                if (memberData.length < 2) {
+                    return await interaction.editReply({
+                        content: '📊 **Server Analytics**\n\n⚠️ Not enough data collected yet. Please check back later for analytics.'
+                    });
+                }
+
+                // Calculate statistics
+                const currentData = memberData[memberData.length - 1];
+                const previousData = memberData[memberData.length - 2];
+                
+                const growth24h = currentData.totalMembers - previousData.totalMembers;
+                const growthRate = ((growth24h / previousData.totalMembers) * 100).toFixed(2);
+                
+                // Calculate 7-day growth
+                const sevenDaysAgoIndex = Math.max(0, memberData.length - 7);
+                const sevenDaysAgoData = memberData[sevenDaysAgoIndex];
+                const growth7d = currentData.totalMembers - sevenDaysAgoData.totalMembers;
+                
+                // Prepare chart data
+                const labels = memberData.map(point => {
+                    const date = new Date(point.timestamp);
+                    return `${date.getMonth()+1}/${date.getDate()}`;
+                });
+                
+                const totalMembersData = memberData.map(point => point.totalMembers);
+                const humanMembersData = memberData.map(point => point.humanMembers);
+                const botMembersData = memberData.map(point => point.botMembers);
+
+                // Create line chart
+                const chart = new QuickChart();
+                chart.setConfig({
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Total Members',
+                                data: totalMembersData,
+                                borderColor: '#5865F2',
+                                backgroundColor: 'rgba(88, 101, 242, 0.1)',
+                                fill: false,
+                                tension: 0.4,
+                                pointRadius: 3
+                            },
+                            {
+                                label: 'Humans',
+                                data: humanMembersData,
+                                borderColor: '#3BA55D',
+                                backgroundColor: 'rgba(59, 165, 93, 0.1)',
+                                fill: false,
+                                tension: 0.4,
+                                pointRadius: 2
+                            },
+                            {
+                                label: 'Bots',
+                                data: botMembersData,
+                                borderColor: '#ED4245',
+                                backgroundColor: 'rgba(237, 66, 69, 0.1)',
+                                fill: false,
+                                tension: 0.4,
+                                pointRadius: 2
+                            }
+                        ]
+                    },
+                    options: {
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: `${interaction.guild.name} - Member Growth (Last 30 Days)`,
+                                font: {
+                                    size: 14
+                                }
+                            },
+                            legend: {
+                                position: 'top'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                }
+                            },
+                            x: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                }
+                            }
+                        }
+                    }
+                });
+
+                const chartUrl = await chart.getShortUrl();
+                const attachment = new AttachmentBuilder(chartUrl, { name: 'member-analytics.png' });
+
+                // Create statistics text
+                const statsText = `📊 **Server Analytics**\n\n` +
+                    `👥 **Current Members:** ${currentData.totalMembers.toLocaleString()}\n` +
+                    `🧑 Humans: ${currentData.humanMembers.toLocaleString()}\n` +
+                    `🤖 Bots: ${currentData.botMembers.toLocaleString()}\n\n` +
+                    `📈 **Recent Growth:**\n` +
+                    `24h: ${growth24h >= 0 ? '+' : ''}${growth24h} members (${growth24h >= 0 ? '+' : ''}${growthRate}%)\n` +
+                    `7d: ${growth7d >= 0 ? '+' : ''}${growth7d} members\n\n` +
+                    `📅 Data collected over ${memberData.length} days`;
+
+                await interaction.editReply({
+                    content: statsText,
+                    files: [attachment]
+                });
+            } catch (error) {
+                console.error('Analytics error:', error);
+                await interaction.editReply({
+                    content: '❌ Failed to generate member analytics.'
                 });
             }
         }
