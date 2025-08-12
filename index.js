@@ -351,56 +351,19 @@ const commands = [
             subcommand
                 .setName('reactionroles')
                 .setDescription('Manage reaction roles')
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('setup')
-                        .setDescription('Setup reaction roles')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('message')
-                                .setDescription('Create reaction role message')
-                                .addChannelOption(option => option.setName('channel').setDescription('Channel for message').setRequired(true))
-                                .addStringOption(option => option.setName('title').setDescription('Message title').setRequired(true))
-                                .addStringOption(option => option.setName('description').setDescription('Message description').setRequired(false))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('add')
-                        .setDescription('Add reaction role')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('role')
-                                .setDescription('Add role to reaction message')
-                                .addStringOption(option => option.setName('message_id').setDescription('Reaction message ID').setRequired(true))
-                                .addRoleOption(option => option.setName('role').setDescription('Role to add').setRequired(true))
-                                .addStringOption(option => option.setName('emoji').setDescription('Reaction emoji').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('remove')
-                        .setDescription('Remove reaction role')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('role')
-                                .setDescription('Remove role from reaction message')
-                                .addStringOption(option => option.setName('message_id').setDescription('Reaction message ID').setRequired(true))
-                                .addRoleOption(option => option.setName('role').setDescription('Role to remove').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('list')
-                        .setDescription('List reaction roles')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('message')
-                                .setDescription('List reaction roles for message')
-                                .addStringOption(option => option.setName('message_id').setDescription('Reaction message ID').setRequired(true))))
-                .addSubcommandGroup(group =>
-                    group
-                        .setName('clear')
-                        .setDescription('Clear reaction roles')
-                        .addSubcommand(sub =>
-                            sub
-                                .setName('message')
-                                .setDescription('Clear all reaction roles from message')
-                                .addStringOption(option => option.setName('message_id').setDescription('Reaction message ID').setRequired(true))))),
+                .addStringOption(option => option.setName('action').setDescription('Action to perform').setRequired(true).addChoices(
+                    { name: 'setup', value: 'setup' },
+                    { name: 'add', value: 'add' },
+                    { name: 'remove', value: 'remove' },
+                    { name: 'list', value: 'list' },
+                    { name: 'clear', value: 'clear' }
+                ))
+                .addChannelOption(option => option.setName('channel').setDescription('Channel for message (setup only)'))
+                .addStringOption(option => option.setName('title').setDescription('Message title (setup only)'))
+                .addStringOption(option => option.setName('description').setDescription('Message description (setup only)'))
+                .addStringOption(option => option.setName('message_id').setDescription('Reaction message ID (add/remove/list/clear)'))
+                .addRoleOption(option => option.setName('role').setDescription('Role to add/remove'))
+                .addStringOption(option => option.setName('emoji').setDescription('Reaction emoji (add only)'))),
 
     // Utility Commands
     new SlashCommandBuilder()
@@ -1130,68 +1093,25 @@ const commands = [
             subcommand
                 .setName('bank')
                 .setDescription('Bank commands')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('deposit')
-                        .setDescription('Deposit coins')
-                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to deposit').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('withdraw')
-                        .setDescription('Withdraw coins')
-                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to withdraw').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('balance')
-                        .setDescription('Check bank balance'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('interest')
-                        .setDescription('Check interest rate'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('loan')
-                        .setDescription('Apply for a loan')
-                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to borrow').setRequired(true).setMinValue(100)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('payloan')
-                        .setDescription('Pay back a loan')
-                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to pay').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('loanbalance')
-                        .setDescription('Check loan balance'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('invest')
-                        .setDescription('View stocks'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('buystock')
-                        .setDescription('Buy stocks')
-                        .addStringOption(option => option.setName('stock').setDescription('Stock to buy').setRequired(true))
-                        .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('sellstock')
-                        .setDescription('Sell stocks')
-                        .addStringOption(option => option.setName('stock').setDescription('Stock to sell').setRequired(true))
-                        .addIntegerOption(option => option.setName('shares').setDescription('Number of shares').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('portfolio')
-                        .setDescription('View stock portfolio'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('dividends')
-                        .setDescription('Check dividends'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('transfer')
-                        .setDescription('Send money to another user')
-                        .addUserOption(option => option.setName('user').setDescription('User to send to').setRequired(true))
-                        .addIntegerOption(option => option.setName('amount').setDescription('Amount to send').setRequired(true).setMinValue(1))))
+                .addStringOption(option => option.setName('action').setDescription('Bank action').setRequired(true).addChoices(
+                    { name: 'deposit', value: 'deposit' },
+                    { name: 'withdraw', value: 'withdraw' },
+                    { name: 'balance', value: 'balance' },
+                    { name: 'interest', value: 'interest' },
+                    { name: 'loan', value: 'loan' },
+                    { name: 'payloan', value: 'payloan' },
+                    { name: 'loanbalance', value: 'loanbalance' },
+                    { name: 'invest', value: 'invest' },
+                    { name: 'buystock', value: 'buystock' },
+                    { name: 'sellstock', value: 'sellstock' },
+                    { name: 'portfolio', value: 'portfolio' },
+                    { name: 'dividends', value: 'dividends' },
+                    { name: 'transfer', value: 'transfer' }
+                ))
+                .addIntegerOption(option => option.setName('amount').setDescription('Amount for deposit/withdraw/loan/etc.'))
+                .addUserOption(option => option.setName('user').setDescription('User for transfer'))
+                .addStringOption(option => option.setName('stock').setDescription('Stock symbol for buy/sell'))
+                .addIntegerOption(option => option.setName('shares').setDescription('Number of shares for buy/sell')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('achievements')
@@ -1206,20 +1126,12 @@ const commands = [
             subcommand
                 .setName('reputation')
                 .setDescription('Reputation commands')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('give')
-                        .setDescription('Give reputation to a user')
-                        .addUserOption(option => option.setName('user').setDescription('User to give rep to').setRequired(true)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('check')
-                        .setDescription('Check reputation')
-                        .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('leaderboard')
-                        .setDescription('View reputation leaderboard')))
+                .addStringOption(option => option.setName('action').setDescription('Reputation action').setRequired(true).addChoices(
+                    { name: 'give', value: 'give' },
+                    { name: 'check', value: 'check' },
+                    { name: 'leaderboard', value: 'leaderboard' }
+                ))
+                .addUserOption(option => option.setName('user').setDescription('User for give/check')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('streaks')
@@ -1285,163 +1197,66 @@ const commands = [
             subcommand
                 .setName('tax')
                 .setDescription('Tax system commands')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('setrate')
-                        .setDescription('Set tax rate')
-                        .addIntegerOption(option => option.setName('rate').setDescription('Tax rate (0-100)').setRequired(true).setMinValue(0).setMaxValue(100)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('checkrate')
-                        .setDescription('Check tax rate'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('collect')
-                        .setDescription('Collect taxes'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('distribute')
-                        .setDescription('Distribute taxes to users'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('exempt')
-                        .setDescription('Exempt user from taxes')
-                        .addUserOption(option => option.setName('user').setDescription('User to exempt').setRequired(true))
-                        .addBooleanOption(option => option.setName('exempt').setDescription('Exempt status').setRequired(true)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('viewrecords')
-                        .setDescription('View tax records')))
+                .addStringOption(option => option.setName('action').setDescription('Tax action').setRequired(true).addChoices(
+                    { name: 'setrate', value: 'setrate' },
+                    { name: 'checkrate', value: 'checkrate' },
+                    { name: 'collect', value: 'collect' },
+                    { name: 'distribute', value: 'distribute' },
+                    { name: 'exempt', value: 'exempt' },
+                    { name: 'viewrecords', value: 'viewrecords' }
+                ))
+                .addIntegerOption(option => option.setName('rate').setDescription('Tax rate for setrate'))
+                .addUserOption(option => option.setName('user').setDescription('User for exempt'))
+                .addBooleanOption(option => option.setName('exempt').setDescription('Exempt status')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('lottery')
                 .setDescription('Lottery system')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('buy')
-                        .setDescription('Buy lottery tickets')
-                        .addIntegerOption(option => option.setName('amount').setDescription('Number of tickets').setRequired(false).setMinValue(1).setMaxValue(100)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('draw')
-                        .setDescription('Draw lottery (admin only)'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('jackpot')
-                        .setDescription('View current jackpot'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('history')
-                        .setDescription('View lottery history')))
+                .addStringOption(option => option.setName('action').setDescription('Lottery action').setRequired(true).addChoices(
+                    { name: 'buy', value: 'buy' },
+                    { name: 'draw', value: 'draw' },
+                    { name: 'jackpot', value: 'jackpot' },
+                    { name: 'history', value: 'history' }
+                ))
+                .addIntegerOption(option => option.setName('amount').setDescription('Number of tickets for buy')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('auction')
                 .setDescription('Auction system')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('create')
-                        .setDescription('Create auction for item')
-                        .addStringOption(option => option.setName('item').setDescription('Item to auction').setRequired(true))
-                        .addIntegerOption(option => option.setName('starting_bid').setDescription('Starting bid').setRequired(true).setMinValue(1))
-                        .addIntegerOption(option => option.setName('duration').setDescription('Duration in hours').setRequired(true).setMinValue(1).setMaxValue(168)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('bid')
-                        .setDescription('Place bid on item')
-                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true))
-                        .addIntegerOption(option => option.setName('amount').setDescription('Bid amount').setRequired(true).setMinValue(1)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('view')
-                        .setDescription('View active auctions'))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('viewitem')
-                        .setDescription('View specific auction')
-                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('cancel')
-                        .setDescription('Cancel auction')
-                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('end')
-                        .setDescription('End auction')
-                        .addStringOption(option => option.setName('auction_id').setDescription('Auction ID').setRequired(true)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('history')
-                        .setDescription('View auction history')))
+                .addStringOption(option => option.setName('action').setDescription('Auction action').setRequired(true).addChoices(
+                    { name: 'create', value: 'create' },
+                    { name: 'bid', value: 'bid' },
+                    { name: 'view', value: 'view' },
+                    { name: 'viewitem', value: 'viewitem' },
+                    { name: 'cancel', value: 'cancel' },
+                    { name: 'end', value: 'end' },
+                    { name: 'history', value: 'history' }
+                ))
+                .addStringOption(option => option.setName('item').setDescription('Item for create'))
+                .addIntegerOption(option => option.setName('starting_bid').setDescription('Starting bid for create'))
+                .addIntegerOption(option => option.setName('duration').setDescription('Duration for create'))
+                .addStringOption(option => option.setName('auction_id').setDescription('Auction ID for bid/viewitem/cancel/end'))
+                .addIntegerOption(option => option.setName('amount').setDescription('Bid amount for bid')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('casino')
                 .setDescription('Casino games')
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('slots')
-                        .setDescription('Play slots')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('blackjack')
-                        .setDescription('Play blackjack')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('roulette')
-                        .setDescription('Play roulette')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('keno')
-                        .setDescription('Play keno')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('craps')
-                        .setDescription('Play craps')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('baccarat')
-                        .setDescription('Play baccarat')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('poker')
-                        .setDescription('Play poker')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('videopoker')
-                        .setDescription('Play video poker')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('bingo')
-                        .setDescription('Play bingo')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('scratchcards')
-                        .setDescription('Play scratch cards')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('wheeloffortune')
-                        .setDescription('Spin the wheel')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('highlow')
-                        .setDescription('Play high low')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))
-                .addSubcommand(subcommand =>
-                    subcommand
-                        .setName('war')
-                        .setDescription('Play war')
-                        .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1).setMaxValue(10000)))),
+                .addStringOption(option => option.setName('game').setDescription('Casino game').setRequired(true).addChoices(
+                    { name: 'slots', value: 'slots' },
+                    { name: 'blackjack', value: 'blackjack' },
+                    { name: 'roulette', value: 'roulette' },
+                    { name: 'keno', value: 'keno' },
+                    { name: 'craps', value: 'craps' },
+                    { name: 'baccarat', value: 'baccarat' },
+                    { name: 'poker', value: 'poker' },
+                    { name: 'videopoker', value: 'videopoker' },
+                    { name: 'bingo', value: 'bingo' },
+                    { name: 'scratchcards', value: 'scratchcards' },
+                    { name: 'wheeloffortune', value: 'wheeloffortune' },
+                    { name: 'highlow', value: 'highlow' },
+                    { name: 'war', value: 'war' }
+                ))
+                .addIntegerOption(option => option.setName('bet').setDescription('Bet amount').setMinValue(1).setMaxValue(10000))),
 
     // Ticket System
     new SlashCommandBuilder()
