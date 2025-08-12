@@ -324,7 +324,7 @@ ${formattedContext || 'No recent context'}${knowledgeText}
 Respond ONLY with the JSON object as specified.`;
             }
 
-            // Use OpenAI with correct parameters (removed temperature)
+            // Use OpenAI with correct parameters (removed temperature, increased max_tokens)
             const response = await openai.chat.completions.create({
                 model: "gpt-5",
                 messages: [
@@ -333,7 +333,7 @@ Respond ONLY with the JSON object as specified.`;
                         content: prompt
                     }
                 ],
-                max_completion_tokens: isDirectMessage ? 500 : 300,
+                max_tokens: isDirectMessage ? 1000 : 500, // Increased token limit
                 response_format: { type: "json_object" }
             });
 
