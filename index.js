@@ -387,31 +387,6 @@ Respond ONLY with the JSON object as specified.`;
                 } catch (parseError) {
                     console.error('AI response parsing error (JSON invalid):', parseError);
                     console.error('Raw AI response that failed to parse:', result);
-                    
-                    // Try to extract JSON with regex as fallback
-                    const jsonMatch = result.match(/\{(?:[^{}]|(?R))*\}/g);
-                    if (jsonMatch && jsonMatch[0]) {
-                        try {
-                            const aiResponse = JSON.parse(jsonMatch[0]);
-                            if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
-                                if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
-                                    return {
-                                        isViolation: true,
-                                        reason: aiResponse.explanation,
-                                        action: aiResponse.action,
-                                        category: aiResponse.category,
-                                        severity: aiResponse.severity,
-                                        confidence: aiResponse.confidence,
-                                        evidence: aiResponse.evidence,
-                                        duration: aiResponse.suggested_duration_minutes,
-                                        response: ''
-                                    };
-                                }
-                            }
-                        } catch (secondParseError) {
-                            console.error('Second parsing attempt also failed:', secondParseError);
-                        }
-                    }
                 }
             }
 
