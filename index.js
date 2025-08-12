@@ -46,32 +46,57 @@ const commands = [
                 .setDescription('Reason for mute')
                 .setRequired(false)),
 
-    // Purge all messages
+    // Purge all messages (up to 250)
     new SlashCommandBuilder()
         .setName('purge')
-        .setDescription('Delete messages from channel')
+        .setDescription('Delete messages from channel (up to 250)')
         .addIntegerOption(option =>
             option.setName('amount')
-                .setDescription('Number of messages to delete (1-100)')
+                .setDescription('Number of messages to delete (1-250)')
                 .setRequired(true)),
 
     // Purge human messages only
     new SlashCommandBuilder()
         .setName('purgehumans')
-        .setDescription('Delete messages from humans only')
+        .setDescription('Delete messages from humans only (up to 250)')
         .addIntegerOption(option =>
             option.setName('amount')
-                .setDescription('Number of messages to check (1-100)')
+                .setDescription('Number of messages to check (1-250)')
                 .setRequired(true)),
 
     // Purge bot messages only
     new SlashCommandBuilder()
         .setName('purgebots')
-        .setDescription('Delete messages from bots only')
+        .setDescription('Delete messages from bots only (up to 250)')
         .addIntegerOption(option =>
             option.setName('amount')
-                .setDescription('Number of messages to check (1-100)')
-                .setRequired(true))
+                .setDescription('Number of messages to check (1-250)')
+                .setRequired(true)),
+
+    // Lock channel command
+    new SlashCommandBuilder()
+        .setName('lock')
+        .setDescription('Lock the current channel')
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for locking the channel')
+                .setRequired(false)),
+
+    // Unlock channel command
+    new SlashCommandBuilder()
+        .setName('unlock')
+        .setDescription('Unlock the current channel'),
+
+    // Slowmode command
+    new SlashCommandBuilder()
+        .setName('slowmode')
+        .setDescription('Set slowmode for the current channel')
+        .addIntegerOption(option =>
+            option.setName('seconds')
+                .setDescription('Seconds between messages (0 to disable)')
+                .setRequired(true)
+                .setMinValue(0)
+                .setMaxValue(21600)) // 6 hours max
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -98,7 +123,7 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const { commandName, options, member } = interaction;
+    const { commandName, options, member, channel } = interaction;
 
     // Check permissions
     if (!hasPermission(member)) {
@@ -156,27 +181,43 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
 
-        // Purge all messages
+        // Purge all messages (up to 250)
         else if (commandName === 'purge') {
-            const amount = options.getInteger('amount');
+            let amount = options.getInteger('amount');
 
-            if (amount < 1 || amount > 100) {
+            if (amount < 1 || amount > 250) {
                 return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 100!',
+                    content: '❌ You need to input a number between 1 and 250!',
                     ephemeral: true
                 });
             }
 
-            // Fix for deprecation warning - use flags instead of ephemeral
-            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
+            await interaction.deferReply({ ephemeral: true });
 
             try {
-                const fetched = await interaction.channel.messages.fetch({ limit: amount });
-                await interaction.channel.bulkDelete(fetched, true);
+                let deletedCount = 0;
+                let remaining = amount;
+
+                // Discord only allows bulk delete of up to 100 messages at a time
+                while (remaining > 0) {
+                    const batchSize = Math.min(remaining, 100);
+                    const fetched = await channel.messages.fetch({ limit: batchSize });
+                    
+                    if (fetched.size === 0) break; // No more messages to delete
+                    
+                    await channel.bulkDelete(fetched, true);
+                    deletedCount += fetched.size;
+                    remaining -= batchSize;
+
+                    // Small delay to avoid rate limits
+                    if (remaining > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
 
                 const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${fetched.size} messages!`,
-                    flags: [64] // EPHEMERAL flag
+                    content: `✅ Successfully deleted ${deletedCount} messages!`,
+                    ephemeral: true
                 });
 
                 // Delete the success message after 5 seconds
@@ -188,35 +229,55 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Purge error:', error);
                 await interaction.editReply({
-                    content: '❌ Failed to delete messages. I might not have permission to manage messages in this channel or the messages are too old.',
-                    flags: [64]
+                    content: '❌ Failed to delete messages. I might not have permission to manage messages in this channel or some messages are too old.',
+                    ephemeral: true
                 });
             }
         }
 
         // Purge human messages only
         else if (commandName === 'purgehumans') {
-            const amount = options.getInteger('amount');
+            let amount = options.getInteger('amount');
 
-            if (amount < 1 || amount > 100) {
+            if (amount < 1 || amount > 250) {
                 return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 100!',
+                    content: '❌ You need to input a number between 1 and 250!',
                     ephemeral: true
                 });
             }
 
-            // Fix for deprecation warning - use flags instead of ephemeral
-            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
+            await interaction.deferReply({ ephemeral: true });
 
             try {
-                const fetched = await interaction.channel.messages.fetch({ limit: amount });
-                const humanMessages = fetched.filter(msg => !msg.author.bot);
-                
-                await interaction.channel.bulkDelete(humanMessages, true);
+                let deletedCount = 0;
+                let remaining = amount;
+                let checkedCount = 0;
+
+                // Process in batches
+                while (remaining > 0 && checkedCount < 1000) { // Safety limit
+                    const batchSize = Math.min(remaining, 100);
+                    const fetched = await channel.messages.fetch({ limit: batchSize });
+                    
+                    if (fetched.size === 0) break;
+                    
+                    const humanMessages = fetched.filter(msg => !msg.author.bot);
+                    if (humanMessages.size > 0) {
+                        await channel.bulkDelete(humanMessages, true);
+                        deletedCount += humanMessages.size;
+                    }
+                    
+                    checkedCount += fetched.size;
+                    remaining -= batchSize;
+
+                    // Small delay to avoid rate limits
+                    if (remaining > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
 
                 const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${humanMessages.size} human messages!`,
-                    flags: [64] // EPHEMERAL flag
+                    content: `✅ Successfully deleted ${deletedCount} human messages!`,
+                    ephemeral: true
                 });
 
                 // Delete the success message after 5 seconds
@@ -228,35 +289,55 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Purge humans error:', error);
                 await interaction.editReply({
-                    content: '❌ Failed to delete human messages. I might not have permission to manage messages in this channel or the messages are too old.',
-                    flags: [64]
+                    content: '❌ Failed to delete human messages. I might not have permission to manage messages in this channel or some messages are too old.',
+                    ephemeral: true
                 });
             }
         }
 
         // Purge bot messages only
         else if (commandName === 'purgebots') {
-            const amount = options.getInteger('amount');
+            let amount = options.getInteger('amount');
 
-            if (amount < 1 || amount > 100) {
+            if (amount < 1 || amount > 250) {
                 return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 100!',
+                    content: '❌ You need to input a number between 1 and 250!',
                     ephemeral: true
                 });
             }
 
-            // Fix for deprecation warning - use flags instead of ephemeral
-            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
+            await interaction.deferReply({ ephemeral: true });
 
             try {
-                const fetched = await interaction.channel.messages.fetch({ limit: amount });
-                const botMessages = fetched.filter(msg => msg.author.bot);
-                
-                await interaction.channel.bulkDelete(botMessages, true);
+                let deletedCount = 0;
+                let remaining = amount;
+                let checkedCount = 0;
+
+                // Process in batches
+                while (remaining > 0 && checkedCount < 1000) { // Safety limit
+                    const batchSize = Math.min(remaining, 100);
+                    const fetched = await channel.messages.fetch({ limit: batchSize });
+                    
+                    if (fetched.size === 0) break;
+                    
+                    const botMessages = fetched.filter(msg => msg.author.bot);
+                    if (botMessages.size > 0) {
+                        await channel.bulkDelete(botMessages, true);
+                        deletedCount += botMessages.size;
+                    }
+                    
+                    checkedCount += fetched.size;
+                    remaining -= batchSize;
+
+                    // Small delay to avoid rate limits
+                    if (remaining > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
 
                 const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${botMessages.size} bot messages!`,
-                    flags: [64] // EPHEMERAL flag
+                    content: `✅ Successfully deleted ${deletedCount} bot messages!`,
+                    ephemeral: true
                 });
 
                 // Delete the success message after 5 seconds
@@ -268,8 +349,84 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Purge bots error:', error);
                 await interaction.editReply({
-                    content: '❌ Failed to delete bot messages. I might not have permission to manage messages in this channel or the messages are too old.',
-                    flags: [64]
+                    content: '❌ Failed to delete bot messages. I might not have permission to manage messages in this channel or some messages are too old.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Lock channel command
+        else if (commandName === 'lock') {
+            const reason = options.getString('reason') || 'No reason provided';
+
+            try {
+                // Update channel permissions to deny SEND_MESSAGES for @everyone
+                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
+                    SendMessages: false
+                });
+
+                await interaction.reply({
+                    content: `🔒 **${channel.name}** has been successfully locked by ${member.user.tag}\n**Reason:** ${reason}`
+                });
+
+                // Log to console
+                console.log(`${channel.name} locked by ${member.user.tag} - Reason: ${reason}`);
+            } catch (error) {
+                console.error('Lock error:', error);
+                await interaction.reply({
+                    content: '❌ Failed to lock the channel. I might not have permission to manage channel permissions.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Unlock channel command
+        else if (commandName === 'unlock') {
+            try {
+                // Update channel permissions to allow SEND_MESSAGES for @everyone
+                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
+                    SendMessages: null // Remove the overwrite
+                });
+
+                await interaction.reply({
+                    content: `🔓 **${channel.name}** has been successfully unlocked by ${member.user.tag}`
+                });
+
+                // Log to console
+                console.log(`${channel.name} unlocked by ${member.user.tag}`);
+            } catch (error) {
+                console.error('Unlock error:', error);
+                await interaction.reply({
+                    content: '❌ Failed to unlock the channel. I might not have permission to manage channel permissions.',
+                    ephemeral: true
+                });
+            }
+        }
+
+        // Slowmode command
+        else if (commandName === 'slowmode') {
+            const seconds = options.getInteger('seconds');
+
+            try {
+                await channel.setRateLimitPerUser(seconds);
+                
+                if (seconds === 0) {
+                    await interaction.reply({
+                        content: `⏱️ Slowmode has been disabled in ${channel.name} by ${member.user.tag}`
+                    });
+                } else {
+                    await interaction.reply({
+                        content: `⏱️ Slowmode has been set to ${seconds} seconds in ${channel.name} by ${member.user.tag}`
+                    });
+                }
+
+                // Log to console
+                console.log(`Slowmode set to ${seconds} seconds in ${channel.name} by ${member.user.tag}`);
+            } catch (error) {
+                console.error('Slowmode error:', error);
+                await interaction.reply({
+                    content: '❌ Failed to set slowmode. I might not have permission to manage channel settings.',
+                    ephemeral: true
                 });
             }
         }
@@ -284,7 +441,7 @@ client.on(Events.InteractionCreate, async interaction => {
         } else if (interaction.deferred) {
             await interaction.editReply({
                 content: '❌ There was an error while executing this command!',
-                flags: [64]
+                ephemeral: true
             });
         }
     }
