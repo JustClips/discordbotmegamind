@@ -2,10 +2,12 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const QuickChart = require('quickchart-js');
 const fs = require('fs').promises;
+const axios = require('axios');
 
 // Configuration - Using environment variable for OWNER_IDS
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // Create a new client instance
 const client = new Client({ 
@@ -15,7 +17,8 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences,
-        GatewayIntentBits.GuildModeration
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildMessageReactions
     ] 
 });
 
@@ -95,6 +98,150 @@ async function recordMemberCount(guild) {
     
     await saveMemberData(guild.id, filteredData);
     return filteredData;
+}
+
+// Auto-moderation patterns
+const scamLinks = [
+    'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
+    'free-nitro', 'nitro-free', 'steamcomminuty', 'steamcommunlty', 'robuxfree',
+    'paypal', 'cashapp', 'venmo', 'zelle', 'westernunion', 'moneygram'
+];
+
+const scamKeywords = [
+    'free nitro', 'nitro for free', 'free discord nitro', 'claim nitro',
+    'steam wallet', 'free robux', 'robux generator', 'paypal money',
+    'cash app hack', 'get free money', 'make money fast', 'easy money'
+];
+
+const nsfwWords = [
+    'nigga', 'nigger', 'faggot', 'kys', 'kill yourself', 'suicide',
+    'porn', 'xxx', 'sex', 'rape', 'pedo', 'pedophile'
+];
+
+// Check if message contains scam content
+function containsScamContent(content) {
+    const lowerContent = content.toLowerCase();
+    
+    // Check for scam links
+    for (const link of scamLinks) {
+        if (lowerContent.includes(link)) return true;
+    }
+    
+    // Check for scam keywords
+    for (const keyword of scamKeywords) {
+        if (lowerContent.includes(keyword)) return true;
+    }
+    
+    return false;
+}
+
+// Check if message contains NSFW content
+function containsNSFWContent(content) {
+    const lowerContent = content.toLowerCase();
+    
+    for (const word of nsfwWords) {
+        if (lowerContent.includes(word)) return true;
+    }
+    
+    return false;
+}
+
+// Check message with Gemini AI
+async function checkWithGemini(content) {
+    if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
+    
+    try {
+        const response = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+            {
+                contents: [{
+                    parts: [{
+                        text: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
+                    }]
+                }]
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        
+        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'OK';
+        
+        if (result.startsWith('VIOLATION:')) {
+            return {
+                isViolation: true,
+                reason: result.replace('VIOLATION:', '').trim()
+            };
+        }
+        
+        return { isViolation: false, reason: '' };
+    } catch (error) {
+        console.error('Gemini API error:', error.message);
+        return { isViolation: false, reason: '' };
+    }
+}
+
+// Auto-moderation function
+async function autoModerate(message) {
+    // Skip bot messages and users with permissions
+    if (message.author.bot || hasPermission(message.member)) return false;
+    
+    const content = message.content;
+    
+    // Check for spam (too many mentions)
+    if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
+        await muteUser(message.member, 10, 'Mention spam detected');
+        await message.delete().catch(() => {});
+        return true;
+    }
+    
+    // Check for link spam
+    const links = content.match(/https?:\/\/[^\s]+/g) || [];
+    if (links.length > 3) {
+        await muteUser(message.member, 15, 'Link spam detected');
+        await message.delete().catch(() => {});
+        return true;
+    }
+    
+    // Check for scam content
+    if (containsScamContent(content)) {
+        await muteUser(message.member, 30, 'Scam content detected');
+        await message.delete().catch(() => {});
+        return true;
+    }
+    
+    // Check for NSFW content
+    if (containsNSFWContent(content)) {
+        await muteUser(message.member, 20, 'Inappropriate content detected');
+        await message.delete().catch(() => {});
+        return true;
+    }
+    
+    // Check with Gemini AI if enabled
+    if (GEMINI_API_KEY) {
+        const geminiResult = await checkWithGemini(content);
+        if (geminiResult.isViolation) {
+            await muteUser(message.member, 25, `AI detected violation: ${geminiResult.reason}`);
+            await message.delete().catch(() => {});
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Mute user function
+async function muteUser(member, durationMinutes, reason) {
+    try {
+        const muteDuration = durationMinutes * 60 * 1000;
+        await member.timeout(muteDuration, reason);
+        return true;
+    } catch (error) {
+        console.error('Auto-mute error:', error);
+        return false;
+    }
 }
 
 // Command definitions
@@ -268,6 +415,9 @@ const temporaryLocks = new Map();
 // Store for warnings (in production, use a database)
 const warnings = new Map();
 
+// Store for command cooldowns
+const commandCooldowns = new Map();
+
 // Register commands
 client.once(Events.ClientReady, async () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
@@ -304,7 +454,292 @@ client.on(Events.ClientReady, async () => {
     }, 6 * 60 * 60 * 1000); // 6 hours
 });
 
-// Handle interactions
+// Handle traditional prefix commands
+client.on(Events.MessageCreate, async message => {
+    // Ignore bot messages and DMs
+    if (message.author.bot || !message.guild) return;
+    
+    const prefix = '!';
+    if (!message.content.startsWith(prefix)) return;
+    
+    // Check permissions
+    if (!hasPermission(message.member)) {
+        return message.reply('❌ You don\'t have permission to use this command!');
+    }
+    
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+    
+    // Command cooldown (3 seconds)
+    const cooldownKey = `${message.author.id}-${command}`;
+    const lastCommand = commandCooldowns.get(cooldownKey);
+    const now = Date.now();
+    
+    if (lastCommand && now - lastCommand < 3000) {
+        return message.reply('⏰ Please wait before using this command again!');
+    }
+    
+    commandCooldowns.set(cooldownKey, now);
+    setTimeout(() => commandCooldowns.delete(cooldownKey), 3000);
+    
+    try {
+        if (command === 'mute') {
+            const user = message.mentions.users.first();
+            if (!user) return message.reply('❌ Please mention a user to mute!');
+            
+            const member = message.guild.members.cache.get(user.id);
+            if (!member) return message.reply('❌ User not found!');
+            
+            const duration = args[1] ? parseInt(args[1]) : 10;
+            const reason = args.slice(2).join(' ') || 'No reason provided';
+            
+            if (isNaN(duration)) return message.reply('❌ Please provide a valid duration in minutes!');
+            
+            // Check if user can be muted
+            if (!member.moderatable) {
+                return message.reply('❌ I cannot mute this user! Make sure my role is higher than theirs.');
+            }
+            
+            // Check if trying to mute owner or user with higher role
+            if (OWNER_IDS.includes(member.id)) {
+                return message.reply('❌ You cannot mute the bot owner!');
+            }
+            
+            const muteDuration = duration * 60 * 1000;
+            await member.timeout(muteDuration, reason);
+            
+            message.reply(`✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}`);
+            
+            // Send DM to user
+            try {
+                await user.send(`You have been muted in ${message.guild.name} for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+        }
+        
+        else if (command === 'unmute') {
+            const user = message.mentions.users.first();
+            if (!user) return message.reply('❌ Please mention a user to unmute!');
+            
+            const member = message.guild.members.cache.get(user.id);
+            if (!member) return message.reply('❌ User not found!');
+            
+            const reason = args.join(' ') || 'No reason provided';
+            
+            // Check if user is currently muted
+            if (!member.isCommunicationDisabled()) {
+                return message.reply('❌ This user is not currently muted!');
+            }
+            
+            try {
+                await member.timeout(null);
+                message.reply(`✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}`);
+                
+                // Send DM to user
+                try {
+                    await user.send(`You have been unmuted in ${message.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+                } catch (error) {
+                    console.log('Could not send DM to user');
+                }
+            } catch (error) {
+                console.error('Unmute error:', error);
+                message.reply('❌ Failed to unmute the user.');
+            }
+        }
+        
+        else if (command === 'purge') {
+            const amount = parseInt(args[0]);
+            if (!amount || amount < 1 || amount > 100) {
+                return message.reply('❌ Please provide a number between 1 and 100!');
+            }
+            
+            try {
+                await message.delete(); // Delete the command message
+                const fetched = await message.channel.messages.fetch({ limit: amount });
+                await message.channel.bulkDelete(fetched, true);
+                const confirmMsg = await message.channel.send(`✅ Successfully deleted ${fetched.size} messages!`);
+                setTimeout(() => confirmMsg.delete().catch(() => {}), 5000);
+            } catch (error) {
+                console.error('Purge error:', error);
+                message.reply('❌ Failed to delete messages.');
+            }
+        }
+        
+        else if (command === 'lock') {
+            const duration = args[0] ? parseInt(args[0]) : 0;
+            const reason = args.slice(1).join(' ') || 'No reason provided';
+            
+            try {
+                // Update channel permissions to deny SEND_MESSAGES for @everyone
+                await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                    SendMessages: false
+                });
+                
+                // Allow owners to still send messages
+                for (const ownerId of OWNER_IDS) {
+                    await message.channel.permissionOverwrites.create(ownerId, {
+                        SendMessages: true
+                    });
+                }
+                
+                if (duration > 0) {
+                    message.reply(`🔒 Channel has been locked for ${duration} minutes\n**Reason:** ${reason}`);
+                    
+                    // Schedule automatic unlock
+                    setTimeout(async () => {
+                        try {
+                            await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                                SendMessages: null
+                            });
+                            
+                            // Remove owner-specific permissions
+                            for (const ownerId of OWNER_IDS) {
+                                const ownerOverwrite = message.channel.permissionOverwrites.cache.get(ownerId);
+                                if (ownerOverwrite) {
+                                    await ownerOverwrite.delete();
+                                }
+                            }
+                            
+                            await message.channel.send(`🔓 Channel has been automatically unlocked after ${duration} minutes`);
+                        } catch (error) {
+                            console.error('Auto-unlock error:', error);
+                        }
+                    }, duration * 60 * 1000);
+                } else {
+                    message.reply(`🔒 Channel has been permanently locked\n**Reason:** ${reason}`);
+                }
+            } catch (error) {
+                console.error('Lock error:', error);
+                message.reply('❌ Failed to lock the channel.');
+            }
+        }
+        
+        else if (command === 'unlock') {
+            try {
+                await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+                    SendMessages: null
+                });
+                
+                // Remove owner-specific permissions
+                for (const ownerId of OWNER_IDS) {
+                    const ownerOverwrite = message.channel.permissionOverwrites.cache.get(ownerId);
+                    if (ownerOverwrite) {
+                        await ownerOverwrite.delete();
+                    }
+                }
+                
+                message.reply('🔓 Channel has been unlocked');
+            } catch (error) {
+                console.error('Unlock error:', error);
+                message.reply('❌ Failed to unlock the channel.');
+            }
+        }
+        
+        else if (command === 'warn') {
+            const user = message.mentions.users.first();
+            if (!user) return message.reply('❌ Please mention a user to warn!');
+            
+            const member = message.guild.members.cache.get(user.id);
+            if (!member) return message.reply('❌ User not found!');
+            
+            const reason = args.join(' ') || 'No reason provided';
+            if (!reason) return message.reply('❌ Please provide a reason for the warning!');
+            
+            // Store warning
+            if (!warnings.has(user.id)) {
+                warnings.set(user.id, []);
+            }
+            const userWarnings = warnings.get(user.id);
+            userWarnings.push({
+                reason: reason,
+                moderator: message.author.tag,
+                timestamp: new Date()
+            });
+            
+            message.reply(`⚠️ <@${user.id}> has been warned.\n**Reason:** ${reason}`);
+            
+            // Send DM to user
+            try {
+                await user.send(`You have been warned in ${message.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+        }
+        
+        else if (command === 'nick') {
+            const user = message.mentions.users.first();
+            if (!user) return message.reply('❌ Please mention a user to change nickname for!');
+            
+            const member = message.guild.members.cache.get(user.id);
+            if (!member) return message.reply('❌ User not found!');
+            
+            const nickname = args.join(' ') || '';
+            
+            try {
+                await member.setNickname(nickname);
+                if (nickname) {
+                    message.reply(`✅ Changed nickname of <@${user.id}> to ${nickname}`);
+                } else {
+                    message.reply(`✅ Reset nickname of <@${user.id}>`);
+                }
+            } catch (error) {
+                console.error('Nickname error:', error);
+                message.reply('❌ Failed to change nickname.');
+            }
+        }
+        
+        else if (command === 'slowmode') {
+            const seconds = parseInt(args[0]);
+            if (isNaN(seconds) || seconds < 0 || seconds > 21600) {
+                return message.reply('❌ Please provide a valid number of seconds (0-21600)!');
+            }
+            
+            try {
+                await message.channel.setRateLimitPerUser(seconds);
+                if (seconds === 0) {
+                    message.reply('⏱️ Slowmode has been disabled');
+                } else {
+                    message.reply(`⏱️ Slowmode has been set to ${seconds} seconds`);
+                }
+            } catch (error) {
+                console.error('Slowmode error:', error);
+                message.reply('❌ Failed to set slowmode.');
+            }
+        }
+        
+    } catch (error) {
+        console.error('Command error:', error);
+        message.reply('❌ There was an error while executing this command!');
+    }
+});
+
+// Handle auto-moderation
+client.on(Events.MessageCreate, async message => {
+    // Ignore bot messages and DMs
+    if (message.author.bot || !message.guild) return;
+    
+    // Skip messages from users with permissions
+    if (hasPermission(message.member)) return;
+    
+    // Auto-moderate the message
+    const wasModerated = await autoModerate(message);
+    
+    if (wasModerated) {
+        // Send warning to channel (ephemeral-like)
+        const warning = await message.channel.send({
+            content: `⚠️ <@${message.author.id}> Your message was removed for violating server rules.`,
+            ephemeral: true
+        });
+        
+        // Delete warning after 10 seconds
+        setTimeout(() => {
+            warning.delete().catch(() => {});
+        }, 10000);
+    }
+});
+
+// Handle interactions (slash commands)
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
