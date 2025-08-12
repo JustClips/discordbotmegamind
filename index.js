@@ -1,6 +1,10 @@
 require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 
+// Configuration
+const MOD_ROLE_ID = '1398413061169352949'; // Your specific role ID
+const OWNER_IDS = ['YOUR_DISCORD_USER_ID']; // Add your Discord user ID here
+
 // Create a new client instance
 const client = new Client({ 
     intents: [
@@ -11,6 +15,17 @@ const client = new Client({
         GatewayIntentBits.GuildModeration
     ] 
 });
+
+// Check if user has permission to use commands
+function hasPermission(member) {
+    // Check if user is owner
+    if (OWNER_IDS.includes(member.id)) return true;
+    
+    // Check if user has the specific mod role
+    if (member.roles.cache.has(MOD_ROLE_ID)) return true;
+    
+    return false;
+}
 
 // Command definitions
 const commands = [
@@ -29,8 +44,7 @@ const commands = [
         .addStringOption(option =>
             option.setName('reason')
                 .setDescription('Reason for mute')
-                .setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+                .setRequired(false)),
 
     // Purge all messages
     new SlashCommandBuilder()
@@ -39,8 +53,7 @@ const commands = [
         .addIntegerOption(option =>
             option.setName('amount')
                 .setDescription('Number of messages to delete (1-100)')
-                .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+                .setRequired(true)),
 
     // Purge human messages only
     new SlashCommandBuilder()
@@ -49,8 +62,7 @@ const commands = [
         .addIntegerOption(option =>
             option.setName('amount')
                 .setDescription('Number of messages to check (1-100)')
-                .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+                .setRequired(true)),
 
     // Purge bot messages only
     new SlashCommandBuilder()
@@ -60,7 +72,6 @@ const commands = [
             option.setName('amount')
                 .setDescription('Number of messages to check (1-100)')
                 .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -90,10 +101,9 @@ client.on(Events.InteractionCreate, async interaction => {
     const { commandName, options, member } = interaction;
 
     // Check permissions
-    if (!member.permissions.has(PermissionFlagsBits.ManageMessages) && 
-        (commandName.includes('purge') || commandName === 'mute')) {
+    if (!hasPermission(member)) {
         return await interaction.reply({
-            content: '❌ You don\'t have permission to use this command!',
+            content: '❌ You don\'t have permission to use this command! You need the Moderator role or be the bot owner.',
             ephemeral: true
         });
     }
@@ -117,7 +127,15 @@ client.on(Events.InteractionCreate, async interaction => {
             // Check if user can be muted
             if (!targetMember.moderatable) {
                 return await interaction.reply({
-                    content: '❌ I cannot mute this user!',
+                    content: '❌ I cannot mute this user! Make sure my role is higher than theirs.',
+                    ephemeral: true
+                });
+            }
+
+            // Check if trying to mute owner or user with higher role
+            if (OWNER_IDS.includes(targetMember.id)) {
+                return await interaction.reply({
+                    content: '❌ You cannot mute the bot owner!',
                     ephemeral: true
                 });
             }
@@ -160,7 +178,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
             // Delete the success message after 5 seconds
             setTimeout(() => {
-                reply.delete().catch(console.error);
+                if (reply.deletable) {
+                    reply.delete().catch(console.error);
+                }
             }, 5000);
         }
 
@@ -188,7 +208,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
             // Delete the success message after 5 seconds
             setTimeout(() => {
-                reply.delete().catch(console.error);
+                if (reply.deletable) {
+                    reply.delete().catch(console.error);
+                }
             }, 5000);
         }
 
@@ -216,7 +238,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
             // Delete the success message after 5 seconds
             setTimeout(() => {
-                reply.delete().catch(console.error);
+                if (reply.deletable) {
+                    reply.delete().catch(console.error);
+                }
             }, 5000);
         }
 
