@@ -1750,7 +1750,7 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Unmute error:', error);
                 await interaction.reply({
-                    content: '❌ Failed to unmute the user. They might not be muted or I don't have permission.',
+                    content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
                     ephemeral: true
                 });
             }
