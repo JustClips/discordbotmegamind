@@ -328,7 +328,7 @@ ${formattedContext || 'No recent context'}${knowledgeText}
 Respond ONLY with the JSON object as specified.`;
             }
 
-            // Use OpenAI instead of Gemini
+            // Use OpenAI instead of Gemini with correct parameters for GPT-5
             const response = await openai.chat.completions.create({
                 model: "gpt-5",
                 messages: [
@@ -338,7 +338,7 @@ Respond ONLY with the JSON object as specified.`;
                     }
                 ],
                 temperature: isDirectMessage ? 0.7 : 0.0,
-                max_tokens: isDirectMessage ? 500 : 300,
+                max_completion_tokens: isDirectMessage ? 500 : 300, // Changed from max_tokens
                 response_format: { type: "json_object" } // Ensure JSON response
             });
 
