@@ -41,6 +41,7 @@ function hasPermission(member) {
 const DATA_FILE = './memberData.json';
 const STRIKES_FILE = './strikes.json';
 const CONVERSATION_FILE = './conversationContext.json';
+const KNOWLEDGE_FILE = './knowledgeBase.json';
 
 // Load member data from file
 async function loadMemberData(guildId) {
@@ -110,7 +111,7 @@ async function saveConversationContext(context) {
 }
 
 // Add message to conversation context
-async function addToConversationContext(channelId, userId, message, isBot = false) {
+async function addToConversationContext(channelId, userId, username, message, isBot = false) {
     try {
         const context = await loadConversationContext();
         
@@ -121,15 +122,15 @@ async function addToConversationContext(channelId, userId, message, isBot = fals
         // Add new message
         context[channelId].push({
             userId: userId,
-            username: isBot ? 'AutoModAI' : userId, // Simplified for storage
+            username: username,
             content: message,
             timestamp: new Date().toISOString(),
             isBot: isBot
         });
         
-        // Keep only last 20 messages per channel
-        if (context[channelId].length > 20) {
-            context[channelId] = context[channelId].slice(-20);
+        // Keep only last 50 messages per channel
+        if (context[channelId].length > 50) {
+            context[channelId] = context[channelId].slice(-50);
         }
         
         await saveConversationContext(context);
@@ -147,6 +148,244 @@ async function getConversationContext(channelId) {
         return context[channelId] || [];
     } catch (error) {
         return [];
+    }
+}
+
+// Load knowledge base
+async function loadKnowledgeBase() {
+    try {
+        const data = await fs.readFile(KNOWLEDGE_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        return {
+            facts: {},
+            rules: {},
+            learned: {}
+        };
+    }
+}
+
+// Save knowledge base
+async function saveKnowledgeBase(knowledge) {
+    try {
+        await fs.writeFile(KNOWLEDGE_FILE, JSON.stringify(knowledge, null, 2));
+    } catch (error) {
+        console.error('Error saving knowledge base:', error);
+    }
+}
+
+// Learn from conversations
+async function learnFromConversation(message) {
+    try {
+        const knowledge = await loadKnowledgeBase();
+        const content = message.content.toLowerCase();
+        
+        // Learn server-specific information
+        if (content.includes('server') && content.includes('rule')) {
+            // Extract potential rules
+            const ruleMatch = content.match(/rule\s*\d*\s*[:\-]?\s*(.+)/i);
+            if (ruleMatch) {
+                const ruleText = ruleMatch[1].trim();
+                knowledge.learned[`rule_${Date.now()}`] = {
+                    type: 'rule',
+                    content: ruleText,
+                    learnedFrom: message.author.id,
+                    timestamp: new Date().toISOString()
+                };
+            }
+        }
+        
+        // Learn about roles and permissions
+        if (content.includes('role') && (content.includes('mod') || content.includes('admin'))) {
+            const roleMatch = content.match(/role\s*[:\-]?\s*(.+)/i);
+            if (roleMatch) {
+                const roleText = roleMatch[1].trim();
+                knowledge.learned[`role_${Date.now()}`] = {
+                    type: 'role_info',
+                    content: roleText,
+                    learnedFrom: message.author.id,
+                    timestamp: new Date().toISOString()
+                };
+            }
+        }
+        
+        // Learn about channels
+        if (content.includes('channel') && (content.includes('#') || content.includes('chat'))) {
+            const channelMatch = content.match(/channel\s*[:\-]?\s*(.+)/i);
+            if (channelMatch) {
+                const channelText = channelMatch[1].trim();
+                knowledge.learned[`channel_${Date.now()}`] = {
+                    type: 'channel_info',
+                    content: channelText,
+                    learnedFrom: message.author.id,
+                    timestamp: new Date().toISOString()
+                };
+            }
+        }
+        
+        await saveKnowledgeBase(knowledge);
+    } catch (error) {
+        console.error('Error learning from conversation:', error);
+    }
+}
+
+// Enhanced AI with conversation context and knowledge
+async function checkWithGemini(content, channelId, userId, username, isDirectMessage = false) {
+    if (!GEMINI_API_KEY) return { isViolation: false, reason: '', response: '' };
+    
+    try {
+        // Get conversation context
+        const conversationContext = await getConversationContext(channelId);
+        
+        // Format context for AI
+        const formattedContext = conversationContext.map(msg => 
+            `${msg.username}: ${msg.content}`
+        ).join('\n');
+        
+        // Get knowledge base
+        const knowledge = await loadKnowledgeBase();
+        
+        // Format knowledge for AI
+        let knowledgeText = '';
+        if (Object.keys(knowledge.learned).length > 0) {
+            knowledgeText = '\n\nServer Knowledge:\n';
+            Object.values(knowledge.learned).slice(-10).forEach(item => {
+                knowledgeText += `- ${item.content}\n`;
+            });
+        }
+        
+        // Pre-process content to detect bypass attempts
+        const processedContent = normalizeText(content);
+        
+        let prompt;
+        if (isDirectMessage) {
+            // For direct messages, be more conversational
+            prompt = `You are AutoModAI, a friendly and knowledgeable Discord moderator bot. You're chatting directly with a user. Be helpful, casual, and informative.
+
+${knowledgeText}
+
+User's message: "${processedContent}"
+
+Recent conversation context:
+${formattedContext || 'No recent context'}
+
+Respond naturally like a human moderator would. Keep it casual but helpful. If they're asking about rules, explain them clearly. If they're asking for help, guide them. If they're being inappropriate, politely redirect them.`;
+        } else {
+            // For regular moderation
+            prompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
+
+OUTPUT RULES (MANDATORY)
+- Respond with exactly one JSON object and nothing else (no explanation outside JSON).
+- JSON schema:
+  {
+    "action": "allow" | "warn" | "delete" | "timeout" | "ban" | "review",
+    "category": "spam" | "scam" | "harassment" | "hate_speech" | "nsfw" | "dox" | "self_harm" | "illegal" | "other",
+    "severity": "low" | "medium" | "high",
+    "confidence": 0.00-1.00,
+    "explanation": "short human explanation (<=200 chars)",
+    "evidence": ["normalized fragments or matched tokens", ...],
+    "suggested_duration_minutes": null | integer
+  }
+
+DECISION GUIDELINES
+- Use full context if provided. If intent is ambiguous, return "review" (not "ban").
+- Do NOT base decisions only on keywords — assess intent, target, role relationships, and surrounding conversation.
+- If obfuscation detected, include the normalized text snippet(s) in "evidence".
+- If the content contains links or invites flagged as scams, set category "scam" and provide the link fragment in "evidence".
+- For harassment/hate/sex content set the correct category and a severity based on explicitness and target (targeted slur=high).
+- Confidence should reflect certainty: low (<0.6) when ambiguous, high (>0.85) when clear attack/scam.
+- Suggested durations: if action is "timeout" provide an integer; otherwise null.
+
+FORMAT & STYLE
+- Keep "explanation" short & human-like (e.g., "Targeted slur against an individual — removed to protect members.").
+- Provide only the JSON object, nothing else.
+
+Message to analyze: "${processedContent}"
+
+Context (recent messages in channel):
+${formattedContext || 'No recent context'}${knowledgeText}
+
+Respond ONLY with the JSON object as specified.`;
+        }
+        
+        const response = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            {
+                contents: [{
+                    parts: [{
+                        text: prompt
+                    }]
+                }],
+                generationConfig: {
+                    temperature: isDirectMessage ? 0.7 : 0.0,
+                    maxOutputTokens: isDirectMessage ? 500 : 300
+                },
+                safetySettings: [
+                    {
+                        category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_HARASSMENT",
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_HATE_SPEECH",
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold: "BLOCK_NONE"
+                    }
+                ]
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        
+        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        
+        if (isDirectMessage) {
+            // For direct messages, return the natural response
+            return {
+                isViolation: false,
+                response: result.trim()
+            };
+        } else {
+            // For moderation, parse JSON response
+            try {
+                const aiResponse = JSON.parse(result);
+                
+                // Validate required fields
+                if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
+                    // Only act on violations with confidence > 0.7
+                    if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
+                        return {
+                            isViolation: true,
+                            reason: aiResponse.explanation,
+                            action: aiResponse.action,
+                            category: aiResponse.category,
+                            severity: aiResponse.severity,
+                            confidence: aiResponse.confidence,
+                            evidence: aiResponse.evidence,
+                            duration: aiResponse.suggested_duration_minutes,
+                            response: ''
+                        };
+                    }
+                }
+            } catch (parseError) {
+                console.error('AI response parsing error:', parseError);
+                console.error('Raw AI response:', result);
+            }
+        }
+        
+        return { isViolation: false, reason: '', response: '' };
+    } catch (error) {
+        console.error('Gemini API error:', error.message);
+        return { isViolation: false, reason: '', response: '' };
     }
 }
 
@@ -352,127 +591,6 @@ function containsNSFWContent(content) {
     return false;
 }
 
-// Enhanced AI with conversation context
-async function checkWithGemini(content, channelId, userId) {
-    if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
-    
-    try {
-        // Get conversation context
-        const conversationContext = await getConversationContext(channelId);
-        
-        // Format context for AI
-        const formattedContext = conversationContext.map(msg => 
-            `${msg.isBot ? 'AutoModAI' : msg.userId}: ${msg.content}`
-        ).join('\n');
-        
-        // Pre-process content to detect bypass attempts
-        const processedContent = normalizeText(content);
-        
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                contents: [{
-                    parts: [{
-                        text: `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
-
-OUTPUT RULES (MANDATORY)
-- Respond with exactly one JSON object and nothing else (no explanation outside JSON).
-- JSON schema:
-  {
-    "action": "allow" | "warn" | "delete" | "timeout" | "ban" | "review",
-    "category": "spam" | "scam" | "harassment" | "hate_speech" | "nsfw" | "dox" | "self_harm" | "illegal" | "other",
-    "severity": "low" | "medium" | "high",
-    "confidence": 0.00-1.00,
-    "explanation": "short human explanation (<=200 chars)",
-    "evidence": ["normalized fragments or matched tokens", ...],
-    "suggested_duration_minutes": null | integer
-  }
-
-DECISION GUIDELINES
-- Use full context if provided. If intent is ambiguous, return "review" (not "ban").
-- Do NOT base decisions only on keywords — assess intent, target, role relationships, and surrounding conversation.
-- If obfuscation detected, include the normalized text snippet(s) in "evidence".
-- If the content contains links or invites flagged as scams, set category "scam" and provide the link fragment in "evidence".
-- For harassment/hate/sex content set the correct category and a severity based on explicitness and target (targeted slur=high).
-- Confidence should reflect certainty: low (<0.6) when ambiguous, high (>0.85) when clear attack/scam.
-- Suggested durations: if action is "timeout" provide an integer; otherwise null.
-
-FORMAT & STYLE
-- Keep "explanation" short & human-like (e.g., "Targeted slur against an individual — removed to protect members.").
-- Provide only the JSON object, nothing else.
-
-Message to analyze: "${processedContent}"
-
-Context (recent messages in channel):
-${formattedContext || 'No recent context'}
-
-Respond ONLY with the JSON object as specified.`
-                    }]
-                }],
-                generationConfig: {
-                    temperature: 0.0,
-                    maxOutputTokens: 300
-                },
-                safetySettings: [
-                    {
-                        category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        threshold: "BLOCK_NONE"
-                    },
-                    {
-                        category: "HARM_CATEGORY_HARASSMENT",
-                        threshold: "BLOCK_NONE"
-                    },
-                    {
-                        category: "HARM_CATEGORY_HATE_SPEECH",
-                        threshold: "BLOCK_NONE"
-                    },
-                    {
-                        category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        threshold: "BLOCK_NONE"
-                    }
-                ]
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-        
-        try {
-            // Try to parse the JSON response
-            const aiResponse = JSON.parse(result);
-            
-            // Validate required fields
-            if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
-                // Only act on violations with confidence > 0.7
-                if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
-                    return {
-                        isViolation: true,
-                        reason: aiResponse.explanation,
-                        action: aiResponse.action,
-                        category: aiResponse.category,
-                        severity: aiResponse.severity,
-                        confidence: aiResponse.confidence,
-                        evidence: aiResponse.evidence,
-                        duration: aiResponse.suggested_duration_minutes
-                    };
-                }
-            }
-        } catch (parseError) {
-            console.error('AI response parsing error:', parseError);
-            console.error('Raw AI response:', result);
-        }
-        
-        return { isViolation: false, reason: '' };
-    } catch (error) {
-        console.error('Gemini API error:', error.message);
-        return { isViolation: false, reason: '' };
-    }
-}
-
 // Auto-moderation function with strike system
 async function autoModerate(message) {
     // Skip bot messages and users with permissions
@@ -481,7 +599,10 @@ async function autoModerate(message) {
     const content = message.content;
     
     // Add message to conversation context
-    await addToConversationContext(message.channel.id, message.author.id, content);
+    await addToConversationContext(message.channel.id, message.author.id, message.author.username, content);
+    
+    // Learn from the conversation
+    await learnFromConversation(message);
     
     // Check for spam (too many mentions)
     if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
@@ -506,7 +627,7 @@ async function autoModerate(message) {
     
     // Check with Gemini AI if API key is available
     if (GEMINI_API_KEY) {
-        const aiResult = await checkWithGemini(content, message.channel.id, message.author.id);
+        const aiResult = await checkWithGemini(content, message.channel.id, message.author.id, message.author.username);
         if (aiResult.isViolation) {
             const reason = `AI detected violation: ${aiResult.reason}`;
             let duration = 15; // Default duration
@@ -519,7 +640,7 @@ async function autoModerate(message) {
             if (aiResult.duration) duration = aiResult.duration;
             
             // Add AI response to conversation context
-            await addToConversationContext(message.channel.id, 'AutoModAI', `Action: ${aiResult.action}, Category: ${aiResult.category}, Reason: ${aiResult.reason}`, true);
+            await addToConversationContext(message.channel.id, client.user.id, client.user.username, `Action: ${aiResult.action}, Category: ${aiResult.category}, Reason: ${aiResult.reason}`, true);
             
             return await handleViolation(
                 message, 
@@ -556,7 +677,7 @@ async function handleViolation(message, reason, muteDuration, category) {
                 await message.author.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ Warning')
-                        .setDescription(`You've received a warning in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nPlease follow the server rules to avoid further action.`)
+                        .setDescription(`Hey ${message.author.username}! You've received a warning in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nPlease follow the server rules to avoid further action. If you have questions, feel free to ask me!`)
                         .setColor(0xFEE75C)
                         .setTimestamp()
                     ]
@@ -571,7 +692,7 @@ async function handleViolation(message, reason, muteDuration, category) {
             
             // Show temporary warning message
             const warningMsg = await message.channel.send({
-                content: `⚠️ <@${message.author.id}> Your message was removed. This is your first warning.\n**Reason:** ${reason}`
+                content: `⚠️ <@${message.author.id}> Hey, your message was removed. This is your first warning.\n**Reason:** ${reason}\nIf you're unsure about the rules, just ask me!`
             });
             
             // Delete warning after 1 minute
@@ -589,7 +710,7 @@ async function handleViolation(message, reason, muteDuration, category) {
                 await message.author.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ Final Warning')
-                        .setDescription(`This is your **final warning** in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nFurther violations will result in a mute.`)
+                        .setDescription(`This is your **final warning** in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nFurther violations will result in a mute. If you think this was a mistake, talk to a moderator.`)
                         .setColor(0xED4245)
                         .setTimestamp()
                     ]
@@ -623,7 +744,7 @@ async function handleViolation(message, reason, muteDuration, category) {
         
         // Show temporary mute message
         const muteMsg = await message.channel.send({
-            content: `🔇 <@${message.author.id}> has been muted for ${muteDuration} minutes.\n**Reason:** ${reason}`
+            content: `🔇 <@${message.author.id}> has been muted for ${muteDuration} minutes.\n**Reason:** ${reason}\nIf you think this was unfair, contact a human moderator.`
         });
         
         // Delete mute message after 1 minute
@@ -888,10 +1009,72 @@ client.on(Events.ClientReady, async () => {
 
 // Handle traditional prefix commands
 client.on(Events.MessageCreate, async message => {
-    // Ignore bot messages and DMs
-    if (message.author.bot || !message.guild) return;
+    // Ignore bot messages and DMs (except for direct communication)
+    if (message.author.bot && message.channel.type !== 'DM') return;
     
     const prefix = '!';
+    
+    // Handle direct messages
+    if (message.channel.type === 'DM') {
+        // Don't respond to bots
+        if (message.author.bot) return;
+        
+        // Handle learning commands
+        if (message.content.toLowerCase().startsWith('!learn')) {
+            const knowledge = await loadKnowledgeBase();
+            const learnedCount = Object.keys(knowledge.learned).length;
+            return message.reply(`I've learned ${learnedCount} things so far! I remember rules, roles, and other server info.`);
+        }
+        
+        // Handle ping command
+        if (message.content.toLowerCase() === '!ping') {
+            return message.reply('Pong! I\'m here and ready to help!');
+        }
+        
+        // Handle help command
+        if (message.content.toLowerCase() === '!help') {
+            return message.reply({
+                embeds: [new EmbedBuilder()
+                    .setTitle('🤖 AutoModAI Help')
+                    .setDescription('I\'m here to help moderate and assist in your server!')
+                    .addFields(
+                        { name: '💬 Direct Message Commands', value: '`!help` - Show this help\n`!learn` - See what I\'ve learned\n`!ping` - Test if I\'m responsive' },
+                        { name: '🛡️ Moderation', value: 'I automatically moderate messages for spam, scams, and inappropriate content.' },
+                        { name: '🧠 Learning', value: 'I learn from conversations and remember server rules, roles, and channels.' }
+                    )
+                    .setColor(0x5865F2)
+                ]
+            });
+        }
+        
+        // Handle general conversation with AI
+        if (GEMINI_API_KEY) {
+            try {
+                const aiResponse = await checkWithGemini(
+                    message.content, 
+                    `dm_${message.author.id}`, 
+                    message.author.id, 
+                    message.author.username, 
+                    true
+                );
+                
+                if (aiResponse.response) {
+                    // Add to conversation context
+                    await addToConversationContext(`dm_${message.author.id}`, message.author.id, message.author.username, message.content);
+                    await addToConversationContext(`dm_${message.author.id}`, client.user.id, client.user.username, aiResponse.response, true);
+                    
+                    return message.reply(aiResponse.response);
+                }
+            } catch (error) {
+                console.error('DM AI error:', error);
+                return message.reply('Sorry, I had trouble processing that. Try again later!');
+            }
+        }
+        
+        return message.reply('Hey there! I\'m AutoModAI, your friendly server moderator. I can help with rules, answer questions, and keep the server safe. Just ask!');
+    }
+    
+    // Handle prefix commands in guilds
     if (!message.content.startsWith(prefix)) return;
     
     // Check permissions
@@ -950,7 +1133,7 @@ client.on(Events.MessageCreate, async message => {
                 await user.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('🔇 You Have Been Muted')
-                        .setDescription(`You have been muted in **${message.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                        .setDescription(`Hey ${user.username}! You've been muted in **${message.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
                         .setColor(0xED4245)
                         .setTimestamp()
                     ]
@@ -991,7 +1174,7 @@ client.on(Events.MessageCreate, async message => {
                     await user.send({
                         embeds: [new EmbedBuilder()
                             .setTitle('🔊 You Have Been Unmuted')
-                            .setDescription(`You have been unmuted in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                            .setDescription(`Great news ${user.username}! You've been unmuted in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
                             .setColor(0x57F287)
                             .setTimestamp()
                         ]
@@ -1184,7 +1367,7 @@ client.on(Events.MessageCreate, async message => {
                 await user.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ You Have Been Warned')
-                        .setDescription(`You have been warned in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                        .setDescription(`Hey ${user.username}! You've been warned in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
                         .setColor(0xFEE75C)
                         .setTimestamp()
                     ]
@@ -1306,7 +1489,7 @@ client.on(Events.MessageCreate, async message => {
                     await user.send({
                         embeds: [new EmbedBuilder()
                             .setTitle('🎉 Role Assigned')
-                            .setDescription(`You have been given the role **${role.name}** in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                            .setDescription(`Congrats ${user.username}! You've been given the role **${role.name}** in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
                             .setColor(0x57F287)
                             .setTimestamp()
                         ]
@@ -1331,18 +1514,61 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// Handle auto-moderation
+// Handle auto-moderation and AI conversations
 client.on(Events.MessageCreate, async message => {
-    // Ignore bot messages and DMs
-    if (message.author.bot || !message.guild) return;
+    // Ignore bot messages (except in DMs for direct communication)
+    if (message.author.bot && message.channel.type !== 'DM') return;
     
-    // Skip messages from users with permissions
-    if (hasPermission(message.member)) return;
+    // Handle DMs for conversation
+    if (message.channel.type === 'DM') {
+        // Already handled in the prefix commands section
+        return;
+    }
     
-    // Auto-moderate the message
-    const wasModerated = await autoModerate(message);
+    // Handle guild messages
+    if (!message.guild) return;
     
-    // Note: Warning messages are handled in autoModerate function
+    // Skip messages from users with permissions for moderation
+    if (!hasPermission(message.member)) {
+        // Auto-moderate the message
+        const wasModerated = await autoModerate(message);
+        
+        // If not moderated, check for direct communication with bot
+        if (!wasModerated && (message.mentions.users.has(client.user.id) || message.content.toLowerCase().includes(client.user.username.toLowerCase()))) {
+            // Handle conversation with bot
+            if (GEMINI_API_KEY) {
+                try {
+                    // Remove bot mention from content
+                    let cleanContent = message.content.replace(/<@!?\d+>/g, '').trim();
+                    if (!cleanContent) cleanContent = 'Hello';
+                    
+                    const aiResponse = await checkWithGemini(
+                        cleanContent, 
+                        message.channel.id, 
+                        message.author.id, 
+                        message.author.username, 
+                        true
+                    );
+                    
+                    if (aiResponse.response) {
+                        // Add to conversation context
+                        await addToConversationContext(message.channel.id, message.author.id, message.author.username, cleanContent);
+                        await addToConversationContext(message.channel.id, client.user.id, client.user.username, aiResponse.response, true);
+                        
+                        // Reply with AI response
+                        await message.reply(aiResponse.response);
+                    }
+                } catch (error) {
+                    console.error('Conversation AI error:', error);
+                    // Don't send error message to avoid spam
+                }
+            }
+        }
+    } else {
+        // For users with permissions, still learn from their messages
+        await addToConversationContext(message.channel.id, message.author.id, message.author.username, message.content);
+        await learnFromConversation(message);
+    }
 });
 
 // Handle interactions (slash commands)
@@ -1407,7 +1633,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 await user.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('🔇 You Have Been Muted')
-                        .setDescription(`You have been muted in **${interaction.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                        .setDescription(`Hey ${user.username}! You've been muted in **${interaction.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
                         .setColor(0xED4245)
                         .setTimestamp()
                     ]
@@ -1455,7 +1681,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     await user.send({
                         embeds: [new EmbedBuilder()
                             .setTitle('🔊 You Have Been Unmuted')
-                            .setDescription(`You have been unmuted in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                            .setDescription(`Great news ${user.username}! You've been unmuted in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
                             .setColor(0x57F287)
                             .setTimestamp()
                         ]
@@ -1918,7 +2144,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 await user.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ You Have Been Warned')
-                        .setDescription(`You have been warned in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                        .setDescription(`Hey ${user.username}! You've been warned in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
                         .setColor(0xFEE75C)
                         .setTimestamp()
                     ]
@@ -2300,7 +2526,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     await user.send({
                         embeds: [new EmbedBuilder()
                             .setTitle('🎉 Role Assigned')
-                            .setDescription(`You have been given the role **${role.name}** in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                            .setDescription(`Congrats ${user.username}! You've been given the role **${role.name}** in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
                             .setColor(0x57F287)
                             .setTimestamp()
                         ]
