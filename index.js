@@ -43,6 +43,12 @@ const STRIKES_FILE = './strikes.json';
 const CONVERSATION_FILE = './conversationContext.json';
 const KNOWLEDGE_FILE = './knowledgeBase.json';
 
+// --- ADD THIS HELPER FUNCTION ---
+// Helper function to create a delay
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Load member data from file
 async function loadMemberData(guildId) {
     try {
@@ -229,38 +235,47 @@ async function learnFromConversation(message) {
     }
 }
 
-// Enhanced AI with conversation context and knowledge
+// --- UPDATED checkWithGemini FUNCTION WITH RETRY LOGIC ---
+// Enhanced AI with conversation context and knowledge, including retry logic for rate limits
 async function checkWithGemini(content, channelId, userId, username, isDirectMessage = false) {
-    if (!GEMINI_API_KEY) return { isViolation: false, reason: '', response: '' };
-    
-    try {
-        // Get conversation context
-        const conversationContext = await getConversationContext(channelId);
-        
-        // Format context for AI
-        const formattedContext = conversationContext.map(msg => 
-            `${msg.username}: ${msg.content}`
-        ).join('\n');
-        
-        // Get knowledge base
-        const knowledge = await loadKnowledgeBase();
-        
-        // Format knowledge for AI
-        let knowledgeText = '';
-        if (Object.keys(knowledge.learned).length > 0) {
-            knowledgeText = '\n\nServer Knowledge:\n';
-            Object.values(knowledge.learned).slice(-10).forEach(item => {
-                knowledgeText += `- ${item.content}\n`;
-            });
-        }
-        
-        // Pre-process content to detect bypass attempts
-        const processedContent = normalizeText(content);
-        
-        let prompt;
-        if (isDirectMessage) {
-            // For direct messages, be more conversational
-            prompt = `You are AutoModAI, a friendly and knowledgeable Discord moderator bot. You're chatting directly with a user. Be helpful, casual, and informative.
+    if (!GEMINI_API_KEY) {
+        console.warn("checkWithGemini called but GEMINI_API_KEY is missing.");
+        return { isViolation: false, reason: '', response: '' };
+    }
+
+    const MAX_RETRIES = 3; // Maximum number of retries for rate limits
+    const BASE_DELAY_MS = 1500; // Initial delay (1.5 seconds) - adjust if needed
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            // Get conversation context
+            const conversationContext = await getConversationContext(channelId);
+
+            // Format context for AI
+            const formattedContext = conversationContext.map(msg =>
+                `${msg.username}: ${msg.content}`
+            ).join('\n');
+
+            // Get knowledge base
+            const knowledge = await loadKnowledgeBase();
+
+            // Format knowledge for AI
+            let knowledgeText = '';
+            if (Object.keys(knowledge.learned).length > 0) {
+                knowledgeText = '\n\nServer Knowledge:\n';
+                // Send last 5 learned items for context, not 10, to keep prompt smaller
+                Object.values(knowledge.learned).slice(-5).forEach(item => {
+                    knowledgeText += `- ${item.content}\n`;
+                });
+            }
+
+            // Pre-process content to detect bypass attempts
+            const processedContent = normalizeText(content);
+
+            let prompt;
+            if (isDirectMessage) {
+                // For direct messages, be more conversational
+                prompt = `You are AutoModAI, a friendly and knowledgeable Discord moderator bot. You're chatting directly with a user. Be helpful, casual, and informative.
 
 ${knowledgeText}
 
@@ -270,9 +285,9 @@ Recent conversation context:
 ${formattedContext || 'No recent context'}
 
 Respond naturally like a human moderator would. Keep it casual but helpful. If they're asking about rules, explain them clearly. If they're asking for help, guide them. If they're being inappropriate, politely redirect them.`;
-        } else {
-            // For regular moderation
-            prompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
+            } else {
+                // For regular moderation
+                prompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
 
 OUTPUT RULES (MANDATORY)
 - Respond with exactly one JSON object and nothing else (no explanation outside JSON).
@@ -306,88 +321,151 @@ Context (recent messages in channel):
 ${formattedContext || 'No recent context'}${knowledgeText}
 
 Respond ONLY with the JSON object as specified.`;
-        }
-        
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-            {
-                contents: [{
-                    parts: [{
-                        text: prompt
-                    }]
-                }],
-                generationConfig: {
-                    temperature: isDirectMessage ? 0.7 : 0.0,
-                    maxOutputTokens: isDirectMessage ? 500 : 300
+            }
+
+            const response = await axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+                {
+                    contents: [{
+                        parts: [{
+                            text: prompt
+                        }]
+                    }],
+                    generationConfig: {
+                        temperature: isDirectMessage ? 0.7 : 0.0,
+                        maxOutputTokens: isDirectMessage ? 500 : 300
+                    },
+                    safetySettings: [
+                        {
+                            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            threshold: "BLOCK_NONE"
+                        },
+                        {
+                            category: "HARM_CATEGORY_HARASSMENT",
+                            threshold: "BLOCK_NONE"
+                        },
+                        {
+                            category: "HARM_CATEGORY_HATE_SPEECH",
+                            threshold: "BLOCK_NONE"
+                        },
+                        {
+                            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            threshold: "BLOCK_NONE"
+                        }
+                    ]
                 },
-                safetySettings: [
-                    {
-                        category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        threshold: "BLOCK_NONE"
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
                     },
-                    {
-                        category: "HARM_CATEGORY_HARASSMENT",
-                        threshold: "BLOCK_NONE"
-                    },
-                    {
-                        category: "HARM_CATEGORY_HATE_SPEECH",
-                        threshold: "BLOCK_NONE"
-                    },
-                    {
-                        category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        threshold: "BLOCK_NONE"
+                    timeout: 15000 // Add a timeout (15 seconds) for the request
+                }
+            );
+
+            const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+            if (isDirectMessage) {
+                // For direct messages, return the natural response
+                return {
+                    isViolation: false,
+                    response: result.trim()
+                };
+            } else {
+                // For moderation, parse JSON response
+                try {
+                    const aiResponse = JSON.parse(result);
+
+                    // Validate required fields
+                    if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
+                        // Only act on violations with confidence > 0.7 (you might adjust this)
+                        if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
+                            return {
+                                isViolation: true,
+                                reason: aiResponse.explanation,
+                                action: aiResponse.action,
+                                category: aiResponse.category,
+                                severity: aiResponse.severity,
+                                confidence: aiResponse.confidence,
+                                evidence: aiResponse.evidence,
+                                duration: aiResponse.suggested_duration_minutes,
+                                response: ''
+                            };
+                        }
+                        // If action is 'allow' or confidence <= 0.7, it's not a violation we act on
+                        return { isViolation: false, reason: '', response: '' };
+                    } else {
+                        // Response didn't have the expected structure
+                        console.error('AI response missing required fields:', aiResponse);
+                        console.error('Raw AI response:', result);
                     }
-                ]
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json'
+                } catch (parseError) {
+                    console.error('AI response parsing error (JSON invalid):', parseError);
+                    console.error('Raw AI response that failed to parse:', result);
                 }
             }
-        );
-        
-        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        
-        if (isDirectMessage) {
-            // For direct messages, return the natural response
-            return {
-                isViolation: false,
-                response: result.trim()
-            };
-        } else {
-            // For moderation, parse JSON response
-            try {
-                const aiResponse = JSON.parse(result);
-                
-                // Validate required fields
-                if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
-                    // Only act on violations with confidence > 0.7
-                    if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
-                        return {
-                            isViolation: true,
-                            reason: aiResponse.explanation,
-                            action: aiResponse.action,
-                            category: aiResponse.category,
-                            severity: aiResponse.severity,
-                            confidence: aiResponse.confidence,
-                            evidence: aiResponse.evidence,
-                            duration: aiResponse.suggested_duration_minutes,
-                            response: ''
-                        };
+
+            // If we get here in the 'else' block, it means parsing failed or structure was wrong.
+            // We should not retry for parsing errors, as retrying the same prompt won't fix it.
+            // Return a default non-violation response.
+            return { isViolation: false, reason: '', response: '' };
+
+        } catch (error) {
+            console.error(`Gemini API attempt ${attempt + 1} failed:`);
+
+            // Check if it's a rate limit error (429)
+            if (error.response && error.response.status === 429) {
+                // Only retry if we have attempts left
+                if (attempt < MAX_RETRIES) {
+                    // Calculate delay - simple exponential backoff
+                    const retryDelay = BASE_DELAY_MS * Math.pow(2, attempt);
+                    console.warn(`Rate limit (429) hit. Retrying in ${retryDelay}ms... (Attempt ${attempt + 1}/${MAX_RETRIES})`);
+
+                    // Check for 'Retry-After' header (value is usually seconds)
+                    const retryAfterHeader = error.response.headers['retry-after'];
+                    let finalDelay = retryDelay;
+                    if (retryAfterHeader) {
+                        const retryAfterSeconds = parseInt(retryAfterHeader, 10);
+                        if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
+                             finalDelay = retryAfterSeconds * 1000; // Convert to milliseconds
+                             console.log(`Using server-suggested Retry-After delay: ${finalDelay}ms`);
+                        }
+                    }
+
+                    await delay(finalDelay);
+                    continue; // Retry the loop
+                } else {
+                    console.error(`Gemini API error: Max retries (${MAX_RETRIES}) exceeded for rate limit (429).`);
+                    // Log more details if available
+                    if (error.response?.data) {
+                        console.error('Rate limit details:', error.response.data);
                     }
                 }
-            } catch (parseError) {
-                console.error('AI response parsing error:', parseError);
-                console.error('Raw AI response:', result);
+            } else {
+                // Handle other errors (network, 5xx, etc.)
+                console.error('Gemini API error (non-429):', error.message);
+                // Log more details if available
+                if (error.response) {
+                    console.error('Status:', error.response.status);
+                    console.error('Headers:', error.response.headers);
+                    // Be careful logging data, it might be large
+                    // console.error('Data:', JSON.stringify(error.response.data, null, 2));
+                } else if (error.request) {
+                    console.error('No response received (network issue?):', error.request);
+                } else {
+                    console.error('Error setting up request:', error.message);
+                }
             }
+
+            // If it's not a retryable 429, or retries are exhausted, stop trying.
+            break;
         }
-        
-        return { isViolation: false, reason: '', response: '' };
-    } catch (error) {
-        console.error('Gemini API error:', error.message);
-        return { isViolation: false, reason: '', response: '' };
     }
+
+    // If the loop completes without returning, it means retries failed or an error occurred that we don't retry.
+    console.warn("checkWithGemini: Returning default non-violation response after errors/retries.");
+    return { isViolation: false, reason: '', response: '' };
 }
+
 
 // Record member count with proper online counting
 async function recordMemberCount(guild) {
@@ -1055,7 +1133,7 @@ client.on(Events.MessageCreate, async message => {
                     `dm_${message.author.id}`, 
                     message.author.id, 
                     message.author.username, 
-                    true
+                    true // isDirectMessage = true
                 );
                 
                 if (aiResponse.response) {
@@ -1547,7 +1625,7 @@ client.on(Events.MessageCreate, async message => {
                         message.channel.id, 
                         message.author.id, 
                         message.author.username, 
-                        true
+                        true // isDirectMessage = true for conversational tone
                     );
                     
                     if (aiResponse.response) {
