@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 
 // Configuration
-const MOD_ROLE_ID = '1398413061169352949'; // Your specific role ID
+const MOD_ROLE_ID = '1398413061169352949';
 const OWNER_IDS = ['YOUR_DISCORD_USER_ID']; // Add your Discord user ID here
 
 // Create a new client instance
@@ -167,21 +167,31 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
-            await interaction.deferReply({ ephemeral: true });
+            // Fix for deprecation warning - use flags instead of ephemeral
+            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
 
-            const fetched = await interaction.channel.messages.fetch({ limit: amount });
-            await interaction.channel.bulkDelete(fetched, true);
+            try {
+                const fetched = await interaction.channel.messages.fetch({ limit: amount });
+                await interaction.channel.bulkDelete(fetched, true);
 
-            const reply = await interaction.editReply({
-                content: `✅ Successfully deleted ${fetched.size} messages!`
-            });
+                const reply = await interaction.editReply({
+                    content: `✅ Successfully deleted ${fetched.size} messages!`,
+                    flags: [64] // EPHEMERAL flag
+                });
 
-            // Delete the success message after 5 seconds
-            setTimeout(() => {
-                if (reply.deletable) {
-                    reply.delete().catch(console.error);
-                }
-            }, 5000);
+                // Delete the success message after 5 seconds
+                setTimeout(() => {
+                    if (reply.deletable) {
+                        reply.delete().catch(console.error);
+                    }
+                }, 5000);
+            } catch (error) {
+                console.error('Purge error:', error);
+                await interaction.editReply({
+                    content: '❌ Failed to delete messages. I might not have permission to manage messages in this channel or the messages are too old.',
+                    flags: [64]
+                });
+            }
         }
 
         // Purge human messages only
@@ -195,23 +205,33 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
-            await interaction.deferReply({ ephemeral: true });
+            // Fix for deprecation warning - use flags instead of ephemeral
+            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
 
-            const fetched = await interaction.channel.messages.fetch({ limit: amount });
-            const humanMessages = fetched.filter(msg => !msg.author.bot);
-            
-            await interaction.channel.bulkDelete(humanMessages, true);
+            try {
+                const fetched = await interaction.channel.messages.fetch({ limit: amount });
+                const humanMessages = fetched.filter(msg => !msg.author.bot);
+                
+                await interaction.channel.bulkDelete(humanMessages, true);
 
-            const reply = await interaction.editReply({
-                content: `✅ Successfully deleted ${humanMessages.size} human messages!`
-            });
+                const reply = await interaction.editReply({
+                    content: `✅ Successfully deleted ${humanMessages.size} human messages!`,
+                    flags: [64] // EPHEMERAL flag
+                });
 
-            // Delete the success message after 5 seconds
-            setTimeout(() => {
-                if (reply.deletable) {
-                    reply.delete().catch(console.error);
-                }
-            }, 5000);
+                // Delete the success message after 5 seconds
+                setTimeout(() => {
+                    if (reply.deletable) {
+                        reply.delete().catch(console.error);
+                    }
+                }, 5000);
+            } catch (error) {
+                console.error('Purge humans error:', error);
+                await interaction.editReply({
+                    content: '❌ Failed to delete human messages. I might not have permission to manage messages in this channel or the messages are too old.',
+                    flags: [64]
+                });
+            }
         }
 
         // Purge bot messages only
@@ -225,23 +245,33 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
-            await interaction.deferReply({ ephemeral: true });
+            // Fix for deprecation warning - use flags instead of ephemeral
+            await interaction.deferReply({ flags: [64] }); // 64 = EPHEMERAL flag
 
-            const fetched = await interaction.channel.messages.fetch({ limit: amount });
-            const botMessages = fetched.filter(msg => msg.author.bot);
-            
-            await interaction.channel.bulkDelete(botMessages, true);
+            try {
+                const fetched = await interaction.channel.messages.fetch({ limit: amount });
+                const botMessages = fetched.filter(msg => msg.author.bot);
+                
+                await interaction.channel.bulkDelete(botMessages, true);
 
-            const reply = await interaction.editReply({
-                content: `✅ Successfully deleted ${botMessages.size} bot messages!`
-            });
+                const reply = await interaction.editReply({
+                    content: `✅ Successfully deleted ${botMessages.size} bot messages!`,
+                    flags: [64] // EPHEMERAL flag
+                });
 
-            // Delete the success message after 5 seconds
-            setTimeout(() => {
-                if (reply.deletable) {
-                    reply.delete().catch(console.error);
-                }
-            }, 5000);
+                // Delete the success message after 5 seconds
+                setTimeout(() => {
+                    if (reply.deletable) {
+                        reply.delete().catch(console.error);
+                    }
+                }, 5000);
+            } catch (error) {
+                console.error('Purge bots error:', error);
+                await interaction.editReply({
+                    content: '❌ Failed to delete bot messages. I might not have permission to manage messages in this channel or the messages are too old.',
+                    flags: [64]
+                });
+            }
         }
 
     } catch (error) {
@@ -253,7 +283,8 @@ client.on(Events.InteractionCreate, async interaction => {
             });
         } else if (interaction.deferred) {
             await interaction.editReply({
-                content: '❌ There was an error while executing this command!'
+                content: '❌ There was an error while executing this command!',
+                flags: [64]
             });
         }
     }
