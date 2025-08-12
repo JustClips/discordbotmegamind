@@ -328,16 +328,15 @@ ${formattedContext || 'No recent context'}${knowledgeText}
 Respond ONLY with the JSON object as specified.`;
             }
 
-            // Use OpenAI instead of Gemini with correct parameters for GPT-5
+            // Use OpenAI instead of Gemini with correct parameters for gpt-5-nano (removed temperature parameter)
             const response = await openai.chat.completions.create({
-                model: "gpt-5",
+                model: "gpt-5-nano-nano",
                 messages: [
                     {
                         role: "user",
                         content: prompt
                     }
                 ],
-                temperature: isDirectMessage ? 0.7 : 0.0,
                 max_completion_tokens: isDirectMessage ? 500 : 300, // Changed from max_tokens
                 response_format: { type: "json_object" } // Ensure JSON response
             });
