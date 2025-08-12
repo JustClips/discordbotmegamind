@@ -13,30 +13,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 // Client setup
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildPresences,
-        GatewayIntentBits.GuildModeration,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMessageTyping
-    ]
-});
-
-// Data files
-const DATA_FILE = './memberData.json';
-const STRIKES_FILE = './strikes.json';
-
-// Permission check
-function hasPermission(member) {
-    if (OWNER_IDS.includes(member.id)) return true;
-    if (member.roles.cache.has(MOD_ROLE_ID)) return true;
-    return false;
-}
-
-// Load/save member data
-async function loadMemberData(guildId) {
+        
     try {
         const data = await fs.readFile(DATA_FILE, 'utf8');
         const allData = JSON.parse(data);
