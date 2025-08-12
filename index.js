@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Configuration
 const MOD_ROLE_ID = '1398413061169352949';
@@ -12,289 +12,222 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildModeration
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildPresences,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildMessageReactions
     ] 
 });
 
-// Check if user has permission to use commands
+// Utility functions
 function hasPermission(member) {
-    // Check if user is owner
     if (OWNER_IDS.includes(member.id)) return true;
-    
-    // Check if user has the specific mod role
     if (member.roles.cache.has(MOD_ROLE_ID)) return true;
-    
     return false;
 }
 
-// Check if user can manage roles (for role commands)
 function canManageRoles(member, targetRole) {
-    // Bot owners can always manage roles
     if (OWNER_IDS.includes(member.id)) return true;
-    
-    // Check if member has ManageRoles permission
     if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) return false;
-    
-    // Check if target role is lower than member's highest role
-    const highestRole = member.roles.highest;
-    return targetRole.position < highestRole.position;
+    return targetRole.position < member.roles.highest.position;
 }
 
-// Check if user can manage target member
 function canManageMember(member, targetMember) {
-    // Bot owners can always manage members
     if (OWNER_IDS.includes(member.id)) return true;
-    
-    // Check if member has ModerateMembers permission
     if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
-    
-    // Check if target member is lower in role hierarchy
     return member.roles.highest.position > targetMember.roles.highest.position;
 }
 
+// Data stores (use database in production)
+const userBalances = new Map(); // userId -> balance
+const userCooldowns = new Map(); // userId -> timestamp
+const warnings = new Map(); // userId -> [warnings]
+const voteKicks = new Map(); // channelId -> voteKickData
+const voteKickCooldowns = new Map(); // userId -> timestamp
+const temporaryLocks = new Map(); // channelId -> lockData
+const starboardMessages = new Map(); // messageId -> starCount
+const starboardChannelId = 'YOUR_STARBOARD_CHANNEL_ID'; // Set this to your starboard channel ID
+
 // Command definitions
 const commands = [
-    // Mute command
+    // Moderation Commands
     new SlashCommandBuilder()
         .setName('mute')
         .setDescription('Mute a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to mute')
-                .setRequired(true))
-        .addIntegerOption(option =>
-            option.setName('duration')
-                .setDescription('Duration in minutes (default: 10)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for mute')
-                .setRequired(false)),
+        .addUserOption(option => option.setName('user').setDescription('User to mute').setRequired(true))
+        .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes').setRequired(false))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for mute').setRequired(false)),
 
-    // Unmute command
     new SlashCommandBuilder()
         .setName('unmute')
         .setDescription('Unmute a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to unmute')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for unmute')
-                .setRequired(false)),
+        .addUserOption(option => option.setName('user').setDescription('User to unmute').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for unmute').setRequired(false)),
 
-    // Purge all messages (up to 250)
-    new SlashCommandBuilder()
-        .setName('purge')
-        .setDescription('Delete messages from channel (up to 250)')
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Number of messages to delete (1-250)')
-                .setRequired(true)),
-
-    // Purge human messages only
-    new SlashCommandBuilder()
-        .setName('purgehumans')
-        .setDescription('Delete messages from humans only (up to 250)')
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Number of messages to check (1-250)')
-                .setRequired(true)),
-
-    // Purge bot messages only
-    new SlashCommandBuilder()
-        .setName('purgebots')
-        .setDescription('Delete messages from bots only (up to 250)')
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Number of messages to check (1-250)')
-                .setRequired(true)),
-
-    // Lock channel command with duration and reason
-    new SlashCommandBuilder()
-        .setName('lock')
-        .setDescription('Lock the current channel temporarily')
-        .addIntegerOption(option =>
-            option.setName('duration')
-                .setDescription('Duration in minutes (0 = permanent)')
-                .setRequired(false)
-                .setMinValue(0))
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for locking the channel')
-                .setRequired(false)),
-
-    // Unlock channel command
-    new SlashCommandBuilder()
-        .setName('unlock')
-        .setDescription('Unlock the current channel'),
-
-    // Slowmode command
-    new SlashCommandBuilder()
-        .setName('slowmode')
-        .setDescription('Set slowmode for the current channel')
-        .addIntegerOption(option =>
-            option.setName('seconds')
-                .setDescription('Seconds between messages (0 to disable)')
-                .setRequired(true)
-                .setMinValue(0)
-                .setMaxValue(21600)),
-
-    // Warn command
     new SlashCommandBuilder()
         .setName('warn')
         .setDescription('Warn a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to warn')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for warning')
-                .setRequired(true)),
+        .addUserOption(option => option.setName('user').setDescription('User to warn').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for warning').setRequired(true)),
 
-    // Clear user messages command
     new SlashCommandBuilder()
-        .setName('clearuser')
-        .setDescription('Delete messages from a specific user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user whose messages to delete')
-                .setRequired(true))
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Number of messages to check (1-100)')
+        .setName('warnings')
+        .setDescription('View warnings for a user')
+        .addUserOption(option => option.setName('user').setDescription('User to check').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('clearwarns')
+        .setDescription('Clear all warnings for a user')
+        .addUserOption(option => option.setName('user').setDescription('User to clear warnings for').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('purge')
+        .setDescription('Delete messages')
+        .addIntegerOption(option => option.setName('amount').setDescription('Number of messages (1-100)').setRequired(true).setMinValue(1).setMaxValue(100))
+        .addUserOption(option => option.setName('user').setDescription('Only delete messages from this user').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('lock')
+        .setDescription('Lock a channel')
+        .addIntegerOption(option => option.setName('duration').setDescription('Duration in minutes (0 = permanent)').setRequired(false))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for locking').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('unlock')
+        .setDescription('Unlock a channel'),
+
+    new SlashCommandBuilder()
+        .setName('slowmode')
+        .setDescription('Set slowmode for channel')
+        .addIntegerOption(option => option.setName('seconds').setDescription('Seconds between messages').setRequired(true).setMinValue(0).setMaxValue(21600)),
+
+    // Role Management
+    new SlashCommandBuilder()
+        .setName('role')
+        .setDescription('Manage roles')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('add')
+                .setDescription('Add a role to a user')
+                .addUserOption(option => option.setName('user').setDescription('User to add role to').setRequired(true))
+                .addRoleOption(option => option.setName('role').setDescription('Role to add').setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('remove')
+                .setDescription('Remove a role from a user')
+                .addUserOption(option => option.setName('user').setDescription('User to remove role from').setRequired(true))
+                .addRoleOption(option => option.setName('role').setDescription('Role to remove').setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('info')
+                .setDescription('Get information about a role')
+                .addRoleOption(option => option.setName('role').setDescription('Role to get info for').setRequired(true))),
+
+    // Utility Commands
+    new SlashCommandBuilder()
+        .setName('userinfo')
+        .setDescription('Get information about a user')
+        .addUserOption(option => option.setName('user').setDescription('User to get info for').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('serverinfo')
+        .setDescription('Get information about the server'),
+
+    new SlashCommandBuilder()
+        .setName('avatar')
+        .setDescription('Get a user\'s avatar')
+        .addUserOption(option => option.setName('user').setDescription('User to get avatar for').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('ping')
+        .setDescription('Check bot latency'),
+
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Show help information'),
+
+    // Fun Commands
+    new SlashCommandBuilder()
+        .setName('8ball')
+        .setDescription('Ask the magic 8-ball a question')
+        .addStringOption(option => option.setName('question').setDescription('Your question').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('coinflip')
+        .setDescription('Flip a coin'),
+
+    new SlashCommandBuilder()
+        .setName('roll')
+        .setDescription('Roll a dice')
+        .addIntegerOption(option => option.setName('sides').setDescription('Number of sides (default: 6)').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('rps')
+        .setDescription('Play Rock Paper Scissors')
+        .addStringOption(option => 
+            option.setName('choice')
+                .setDescription('Your choice')
                 .setRequired(true)
-                .setMinValue(1)
-                .setMaxValue(100)),
+                .addChoices(
+                    { name: 'Rock', value: 'rock' },
+                    { name: 'Paper', value: 'paper' },
+                    { name: 'Scissors', value: 'scissors' }
+                )),
 
-    // Role management commands
-    new SlashCommandBuilder()
-        .setName('addrole')
-        .setDescription('Add a role to a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to add role to')
-                .setRequired(true))
-        .addRoleOption(option =>
-            option.setName('role')
-                .setDescription('The role to add')
-                .setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName('removerole')
-        .setDescription('Remove a role from a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to remove role from')
-                .setRequired(true))
-        .addRoleOption(option =>
-            option.setName('role')
-                .setDescription('The role to remove')
-                .setRequired(true)),
-
-    // Nickname command
-    new SlashCommandBuilder()
-        .setName('nick')
-        .setDescription('Change a user\'s nickname')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to change nickname for')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('nickname')
-                .setDescription('New nickname (leave empty to reset)')
-                .setRequired(false)),
-
-    // Channel topic command
-    new SlashCommandBuilder()
-        .setName('topic')
-        .setDescription('Set the channel topic')
-        .addStringOption(option =>
-            option.setName('text')
-                .setDescription('New channel topic')
-                .setRequired(true)),
-
-    // Announce command
-    new SlashCommandBuilder()
-        .setName('announce')
-        .setDescription('Make an announcement')
-        .addStringOption(option =>
-            option.setName('message')
-                .setDescription('Announcement message')
-                .setRequired(true))
-        .addChannelOption(option =>
-            option.setName('channel')
-                .setDescription('Channel to send announcement to')
-                .setRequired(false)),
-
-    // Gamble command
-    new SlashCommandBuilder()
-        .setName('gamble')
-        .setDescription('Gamble some coins')
-        .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Amount to gamble (10-1000)')
-                .setRequired(true)
-                .setMinValue(10)
-                .setMaxValue(1000)),
-
-    // Balance command
+    // Economy Commands
     new SlashCommandBuilder()
         .setName('balance')
         .setDescription('Check your coin balance'),
 
-    // Leaderboard command
     new SlashCommandBuilder()
         .setName('leaderboard')
         .setDescription('View the coin leaderboard'),
 
-    // Vote kick command
+    new SlashCommandBuilder()
+        .setName('daily')
+        .setDescription('Claim your daily reward'),
+
+    new SlashCommandBuilder()
+        .setName('gamble')
+        .setDescription('Gamble your coins')
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to gamble').setRequired(true).setMinValue(10).setMaxValue(1000)),
+
+    // Voting Commands
     new SlashCommandBuilder()
         .setName('votekick')
         .setDescription('Start a vote to kick a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to vote kick')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('reason')
-                .setDescription('Reason for votekick')
-                .setRequired(false))
+        .addUserOption(option => option.setName('user').setDescription('User to vote kick').setRequired(true))
+        .addStringOption(option => option.setName('reason').setDescription('Reason for votekick').setRequired(false)),
+
+    // Starboard Commands
+    new SlashCommandBuilder()
+        .setName('starboard')
+        .setDescription('Starboard settings')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('setchannel')
+                .setDescription('Set the starboard channel')
+                .addChannelOption(option => option.setName('channel').setDescription('Channel to use as starboard').setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('threshold')
+                .setDescription('Set star threshold')
+                .addIntegerOption(option => option.setName('count').setDescription('Number of stars needed').setRequired(true).setMinValue(1)))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-
-// Store for temporary locks
-const temporaryLocks = new Map();
-
-// Store for warnings (in production, use a database)
-const warnings = new Map();
-
-// Store for gambling data
-const userBalances = new Map(); // userId -> balance
-const userCooldowns = new Map(); // userId -> timestamp
-
-// Store for votekick data
-const voteKicks = new Map(); // channelId -> {targetUser, votes, voters, startTime}
-const voteKickCooldowns = new Map(); // targetUserId -> timestamp
 
 // Register commands
 client.once(Events.ClientReady, async () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
     
-    // Clear any existing temporary locks on startup
-    temporaryLocks.clear();
-    
     try {
         console.log('Started refreshing application (/) commands.');
-        
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commands }
         );
-        
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
         console.error(error);
@@ -305,454 +238,56 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
-    const { commandName, options, member, channel } = interaction;
+    const { commandName, options, member, channel, guild } = interaction;
 
     // Check permissions for mod commands
-    if (['mute', 'unmute', 'purge', 'purgehumans', 'purgebots', 'lock', 'unlock', 'slowmode', 'warn', 'clearuser', 'addrole', 'removerole', 'nick', 'topic', 'announce'].includes(commandName)) {
-        if (!hasPermission(member)) {
-            return await interaction.reply({
-                content: '❌ You don\'t have permission to use this command! You need the Moderator role or be the bot owner.',
-                ephemeral: true
-            });
-        }
+    const modCommands = ['mute', 'unmute', 'warn', 'warnings', 'clearwarns', 'purge', 'lock', 'unlock', 'slowmode', 'role'];
+    if (modCommands.includes(commandName) && !hasPermission(member)) {
+        return await interaction.reply({
+            content: '❌ You don\'t have permission to use this command!',
+            ephemeral: true
+        });
     }
 
     try {
-        // Mute command
+        // Moderation Commands
         if (commandName === 'mute') {
             const user = options.getUser('user');
             const duration = options.getInteger('duration') || 10;
             const reason = options.getString('reason') || 'No reason provided';
             
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
+            const targetMember = await guild.members.fetch(user.id);
+            if (!targetMember) return await interaction.reply({ content: '❌ User not found!', ephemeral: true });
+            if (!targetMember.moderatable) return await interaction.reply({ content: '❌ Cannot mute this user!', ephemeral: true });
+            if (OWNER_IDS.includes(targetMember.id)) return await interaction.reply({ content: '❌ Cannot mute bot owner!', ephemeral: true });
 
-            // Check if user can be muted
-            if (!targetMember.moderatable) {
-                return await interaction.reply({
-                    content: '❌ I cannot mute this user! Make sure my role is higher than theirs.',
-                    ephemeral: true
-                });
-            }
-
-            // Check if trying to mute owner or user with higher role
-            if (OWNER_IDS.includes(targetMember.id)) {
-                return await interaction.reply({
-                    content: '❌ You cannot mute the bot owner!',
-                    ephemeral: true
-                });
-            }
-
-            const muteDuration = duration * 60 * 1000; // Convert to milliseconds
-            
+            const muteDuration = duration * 60 * 1000;
             await targetMember.timeout(muteDuration, reason);
             
             await interaction.reply({
                 content: `✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
             });
-
-            // Send DM to user with moderator info
-            try {
-                await user.send(`You have been muted in ${interaction.guild.name} for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
-            } catch (error) {
-                console.log('Could not send DM to user');
-            }
         }
 
-        // Unmute command
         else if (commandName === 'unmute') {
             const user = options.getUser('user');
             const reason = options.getString('reason') || 'No reason provided';
             
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
+            const targetMember = await guild.members.fetch(user.id);
+            if (!targetMember) return await interaction.reply({ content: '❌ User not found!', ephemeral: true });
+            if (!targetMember.isCommunicationDisabled()) return await interaction.reply({ content: '❌ User is not muted!', ephemeral: true });
 
-            // Check if user is currently muted
-            if (!targetMember.isCommunicationDisabled()) {
-                return await interaction.reply({
-                    content: '❌ This user is not currently muted!',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                // Remove timeout
-                await targetMember.timeout(null);
-                
-                await interaction.reply({
-                    content: `✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
-                });
-
-                // Send DM to user with moderator info
-                try {
-                    await user.send(`You have been unmuted in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
-                } catch (error) {
-                    console.log('Could not send DM to user');
-                }
-            } catch (error) {
-                console.error('Unmute error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
-                    ephemeral: true
-                });
-            }
+            await targetMember.timeout(null);
+            await interaction.reply({
+                content: `✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
+            });
         }
 
-        // Purge all messages (up to 250)
-        else if (commandName === 'purge') {
-            let amount = options.getInteger('amount');
-
-            if (amount < 1 || amount > 250) {
-                return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 250!',
-                    ephemeral: true
-                });
-            }
-
-            await interaction.deferReply({ ephemeral: true });
-
-            try {
-                let deletedCount = 0;
-                let remaining = amount;
-
-                // Discord only allows bulk delete of up to 100 messages at a time
-                while (remaining > 0) {
-                    const batchSize = Math.min(remaining, 100);
-                    const fetched = await channel.messages.fetch({ limit: batchSize });
-                    
-                    if (fetched.size === 0) break; // No more messages to delete
-                    
-                    await channel.bulkDelete(fetched, true);
-                    deletedCount += fetched.size;
-                    remaining -= batchSize;
-
-                    // Small delay to avoid rate limits
-                    if (remaining > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
-
-                const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${deletedCount} messages!`,
-                    ephemeral: true
-                });
-
-                // Delete the success message after 5 seconds
-                setTimeout(() => {
-                    if (reply.deletable) {
-                        reply.delete().catch(console.error);
-                    }
-                }, 5000);
-            } catch (error) {
-                console.error('Purge error:', error);
-                await interaction.editReply({
-                    content: '❌ Failed to delete messages. I might not have permission to manage messages in this channel or some messages are too old.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Purge human messages only
-        else if (commandName === 'purgehumans') {
-            let amount = options.getInteger('amount');
-
-            if (amount < 1 || amount > 250) {
-                return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 250!',
-                    ephemeral: true
-                });
-            }
-
-            await interaction.deferReply({ ephemeral: true });
-
-            try {
-                let deletedCount = 0;
-                let remaining = amount;
-                let checkedCount = 0;
-
-                // Process in batches
-                while (remaining > 0 && checkedCount < 1000) { // Safety limit
-                    const batchSize = Math.min(remaining, 100);
-                    const fetched = await channel.messages.fetch({ limit: batchSize });
-                    
-                    if (fetched.size === 0) break;
-                    
-                    const humanMessages = fetched.filter(msg => !msg.author.bot);
-                    if (humanMessages.size > 0) {
-                        await channel.bulkDelete(humanMessages, true);
-                        deletedCount += humanMessages.size;
-                    }
-                    
-                    checkedCount += fetched.size;
-                    remaining -= batchSize;
-
-                    // Small delay to avoid rate limits
-                    if (remaining > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
-
-                const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${deletedCount} human messages!`,
-                    ephemeral: true
-                });
-
-                // Delete the success message after 5 seconds
-                setTimeout(() => {
-                    if (reply.deletable) {
-                        reply.delete().catch(console.error);
-                    }
-                }, 5000);
-            } catch (error) {
-                console.error('Purge humans error:', error);
-                await interaction.editReply({
-                    content: '❌ Failed to delete human messages. I might not have permission to manage messages in this channel or some messages are too old.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Purge bot messages only
-        else if (commandName === 'purgebots') {
-            let amount = options.getInteger('amount');
-
-            if (amount < 1 || amount > 250) {
-                return await interaction.reply({
-                    content: '❌ You need to input a number between 1 and 250!',
-                    ephemeral: true
-                });
-            }
-
-            await interaction.deferReply({ ephemeral: true });
-
-            try {
-                let deletedCount = 0;
-                let remaining = amount;
-                let checkedCount = 0;
-
-                // Process in batches
-                while (remaining > 0 && checkedCount < 1000) { // Safety limit
-                    const batchSize = Math.min(remaining, 100);
-                    const fetched = await channel.messages.fetch({ limit: batchSize });
-                    
-                    if (fetched.size === 0) break;
-                    
-                    const botMessages = fetched.filter(msg => msg.author.bot);
-                    if (botMessages.size > 0) {
-                        await channel.bulkDelete(botMessages, true);
-                        deletedCount += botMessages.size;
-                    }
-                    
-                    checkedCount += fetched.size;
-                    remaining -= batchSize;
-
-                    // Small delay to avoid rate limits
-                    if (remaining > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
-
-                const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${deletedCount} bot messages!`,
-                    ephemeral: true
-                });
-
-                // Delete the success message after 5 seconds
-                setTimeout(() => {
-                    if (reply.deletable) {
-                        reply.delete().catch(console.error);
-                    }
-                }, 5000);
-            } catch (error) {
-                console.error('Purge bots error:', error);
-                await interaction.editReply({
-                    content: '❌ Failed to delete bot messages. I might not have permission to manage messages in this channel or some messages are too old.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Lock channel command with duration and reason
-        else if (commandName === 'lock') {
-            const duration = options.getInteger('duration') || 0; // 0 = permanent
-            const reason = options.getString('reason') || 'No reason provided';
-
-            try {
-                // Update channel permissions to deny SEND_MESSAGES for @everyone
-                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
-                    SendMessages: false
-                });
-
-                // Allow owners to still send messages
-                for (const ownerId of OWNER_IDS) {
-                    await channel.permissionOverwrites.create(ownerId, {
-                        SendMessages: true
-                    });
-                }
-
-                // If duration is specified, schedule unlock
-                if (duration > 0) {
-                    const unlockTime = Date.now() + (duration * 60 * 1000);
-                    
-                    await interaction.reply({
-                        content: `🔒 <#${channel.id}> has been locked by <@${member.user.id}> for ${duration} minutes\n**Reason:** ${reason}`
-                    });
-
-                    // Schedule automatic unlock
-                    setTimeout(async () => {
-                        try {
-                            // Remove the temporary lock record
-                            temporaryLocks.delete(channel.id);
-                            
-                            // Unlock the channel
-                            await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
-                                SendMessages: null // Remove the overwrite
-                            });
-                            
-                            // Remove owner-specific permissions
-                            for (const ownerId of OWNER_IDS) {
-                                const ownerOverwrite = channel.permissionOverwrites.cache.get(ownerId);
-                                if (ownerOverwrite) {
-                                    await ownerOverwrite.delete();
-                                }
-                            }
-                            
-                            // Send unlock notification
-                            await channel.send({
-                                content: `🔓 <#${channel.id}> has been automatically unlocked after ${duration} minutes`
-                            });
-                            
-                            console.log(`${channel.name} automatically unlocked after ${duration} minutes`);
-                        } catch (error) {
-                            console.error('Auto-unlock error:', error);
-                        }
-                    }, duration * 60 * 1000);
-
-                    // Store the temporary lock
-                    temporaryLocks.set(channel.id, {
-                        unlockTime: unlockTime,
-                        moderator: member.user.tag,
-                        reason: reason
-                    });
-                } else {
-                    // Permanent lock
-                    await interaction.reply({
-                        content: `🔒 <#${channel.id}> has been permanently locked by <@${member.user.id}>\n**Reason:** ${reason}`
-                    });
-                }
-
-                // Log to console
-                console.log(`${channel.name} locked by ${member.user.tag} for ${duration} minutes - Reason: ${reason}`);
-            } catch (error) {
-                console.error('Lock error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to lock the channel. I might not have permission to manage channel permissions.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Unlock channel command
-        else if (commandName === 'unlock') {
-            try {
-                // Check if channel was temporarily locked
-                const tempLock = temporaryLocks.get(channel.id);
-                
-                // Update channel permissions to allow SEND_MESSAGES for @everyone
-                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
-                    SendMessages: null // Remove the overwrite
-                });
-
-                // Remove owner-specific permissions
-                for (const ownerId of OWNER_IDS) {
-                    const ownerOverwrite = channel.permissionOverwrites.cache.get(ownerId);
-                    if (ownerOverwrite) {
-                        await ownerOverwrite.delete();
-                    }
-                }
-
-                // Remove from temporary locks
-                temporaryLocks.delete(channel.id);
-
-                if (tempLock) {
-                    await interaction.reply({
-                        content: `🔓 <#${channel.id}> has been unlocked by <@${member.user.id}>\nIt was originally locked by ${tempLock.moderator} for reason: ${tempLock.reason}`
-                    });
-                } else {
-                    await interaction.reply({
-                        content: `🔓 <#${channel.id}> has been unlocked by <@${member.user.id}>`
-                    });
-                }
-
-                // Log to console
-                console.log(`${channel.name} unlocked by ${member.user.tag}`);
-            } catch (error) {
-                console.error('Unlock error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to unlock the channel. I might not have permission to manage channel permissions.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Slowmode command
-        else if (commandName === 'slowmode') {
-            const seconds = options.getInteger('seconds');
-
-            try {
-                await channel.setRateLimitPerUser(seconds);
-                
-                if (seconds === 0) {
-                    await interaction.reply({
-                        content: `⏱️ Slowmode has been disabled in <#${channel.id}> by <@${member.user.id}>`
-                    });
-                } else {
-                    await interaction.reply({
-                        content: `⏱️ Slowmode has been set to ${seconds} seconds in <#${channel.id}> by <@${member.user.id}>`
-                    });
-                }
-
-                // Log to console
-                console.log(`Slowmode set to ${seconds} seconds in ${channel.name} by ${member.user.tag}`);
-            } catch (error) {
-                console.error('Slowmode error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to set slowmode. I might not have permission to manage channel settings.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Warn command
         else if (commandName === 'warn') {
             const user = options.getUser('user');
             const reason = options.getString('reason');
             
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            // Store warning (in production, use a database)
-            if (!warnings.has(user.id)) {
-                warnings.set(user.id, []);
-            }
+            if (!warnings.has(user.id)) warnings.set(user.id, []);
             const userWarnings = warnings.get(user.id);
             userWarnings.push({
                 reason: reason,
@@ -763,264 +298,367 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({
                 content: `⚠️ <@${user.id}> has been warned.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
             });
-
-            // Send DM to user
-            try {
-                await user.send(`You have been warned in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
-            } catch (error) {
-                console.log('Could not send DM to user');
-            }
         }
 
-        // Clear user messages command
-        else if (commandName === 'clearuser') {
+        else if (commandName === 'warnings') {
+            const user = options.getUser('user') || interaction.user;
+            
+            if (!warnings.has(user.id) || warnings.get(user.id).length === 0) {
+                return await interaction.reply({
+                    content: `<@${user.id}> has no warnings.`,
+                    ephemeral: true
+                });
+            }
+
+            const userWarnings = warnings.get(user.id);
+            let warningText = `**Warnings for <@${user.id}>**\n\n`;
+            userWarnings.forEach((warning, index) => {
+                warningText += `**${index + 1}.** ${warning.reason} - ${warning.moderator} (${warning.timestamp.toLocaleString()})\n`;
+            });
+
+            await interaction.reply({ content: warningText });
+        }
+
+        else if (commandName === 'clearwarns') {
             const user = options.getUser('user');
+            warnings.delete(user.id);
+            await interaction.reply({
+                content: `✅ Cleared all warnings for <@${user.id}>`
+            });
+        }
+
+        else if (commandName === 'purge') {
             const amount = options.getInteger('amount');
-
+            const user = options.getUser('user');
+            
             await interaction.deferReply({ ephemeral: true });
-
-            try {
-                let deletedCount = 0;
-                let remaining = amount;
-                let checkedCount = 0;
-
-                // Process in batches
-                while (remaining > 0 && checkedCount < 1000) { // Safety limit
-                    const batchSize = Math.min(remaining, 100);
-                    const fetched = await channel.messages.fetch({ limit: batchSize });
-                    
-                    if (fetched.size === 0) break;
-                    
-                    const userMessages = fetched.filter(msg => msg.author.id === user.id);
-                    if (userMessages.size > 0) {
-                        await channel.bulkDelete(userMessages, true);
-                        deletedCount += userMessages.size;
-                    }
-                    
-                    checkedCount += fetched.size;
-                    remaining -= batchSize;
-
-                    // Small delay to avoid rate limits
-                    if (remaining > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                }
-
-                const reply = await interaction.editReply({
-                    content: `✅ Successfully deleted ${deletedCount} messages from <@${user.id}>!`,
-                    ephemeral: true
-                });
-
-                // Delete the success message after 5 seconds
-                setTimeout(() => {
-                    if (reply.deletable) {
-                        reply.delete().catch(console.error);
-                    }
-                }, 5000);
-            } catch (error) {
-                console.error('Clear user error:', error);
-                await interaction.editReply({
-                    content: '❌ Failed to delete user messages. I might not have permission to manage messages in this channel or some messages are too old.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Add role command
-        else if (commandName === 'addrole') {
-            const user = options.getUser('user');
-            const role = options.getRole('role');
             
-            const targetMember = await interaction.guild.members.fetch(user.id);
+            let deletedCount = 0;
+            let remaining = amount;
             
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            // Check permissions
-            if (!canManageRoles(member, role)) {
-                return await interaction.reply({
-                    content: '❌ You don\'t have permission to add this role! You need Manage Roles permission and the role must be lower than your highest role.',
-                    ephemeral: true
-                });
-            }
-
-            // Check if target member can receive this role
-            if (!canManageMember(member, targetMember)) {
-                return await interaction.reply({
-                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                await targetMember.roles.add(role);
-                await interaction.reply({
-                    content: `✅ Added role <@&${role.id}> to <@${user.id}>`
-                });
-            } catch (error) {
-                console.error('Add role error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to add role. I might not have permission or the role is higher than my role.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Remove role command
-        else if (commandName === 'removerole') {
-            const user = options.getUser('user');
-            const role = options.getRole('role');
-            
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            // Check permissions
-            if (!canManageRoles(member, role)) {
-                return await interaction.reply({
-                    content: '❌ You don\'t have permission to remove this role! You need Manage Roles permission and the role must be lower than your highest role.',
-                    ephemeral: true
-                });
-            }
-
-            // Check if target member can be managed
-            if (!canManageMember(member, targetMember)) {
-                return await interaction.reply({
-                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                await targetMember.roles.remove(role);
-                await interaction.reply({
-                    content: `✅ Removed role <@&${role.id}> from <@${user.id}>`
-                });
-            } catch (error) {
-                console.error('Remove role error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to remove role. I might not have permission or the role is higher than my role.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Nickname command
-        else if (commandName === 'nick') {
-            const user = options.getUser('user');
-            const nickname = options.getString('nickname') || '';
-            
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            // Check if target member can be managed
-            if (!canManageMember(member, targetMember)) {
-                return await interaction.reply({
-                    content: '❌ You cannot manage this user! Your highest role must be higher than theirs.',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                await targetMember.setNickname(nickname);
-                if (nickname) {
-                    await interaction.reply({
-                        content: `✅ Changed nickname of <@${user.id}> to ${nickname}`
-                    });
+            while (remaining > 0) {
+                const batchSize = Math.min(remaining, 100);
+                const fetched = await channel.messages.fetch({ limit: batchSize });
+                
+                if (fetched.size === 0) break;
+                
+                let messagesToDelete;
+                if (user) {
+                    messagesToDelete = fetched.filter(msg => msg.author.id === user.id);
                 } else {
-                    await interaction.reply({
-                        content: `✅ Reset nickname of <@${user.id}>`
-                    });
+                    messagesToDelete = fetched;
                 }
-            } catch (error) {
-                console.error('Nickname error:', error);
+                
+                if (messagesToDelete.size > 0) {
+                    await channel.bulkDelete(messagesToDelete, true);
+                    deletedCount += messagesToDelete.size;
+                }
+                
+                remaining -= batchSize;
+                if (remaining > 0) await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            await interaction.editReply({
+                content: `✅ Successfully deleted ${deletedCount} messages!`
+            });
+        }
+
+        else if (commandName === 'lock') {
+            const duration = options.getInteger('duration') || 0;
+            const reason = options.getString('reason') || 'No reason provided';
+
+            await channel.permissionOverwrites.create(guild.roles.everyone, { SendMessages: false });
+            for (const ownerId of OWNER_IDS) {
+                await channel.permissionOverwrites.create(ownerId, { SendMessages: true });
+            }
+
+            if (duration > 0) {
                 await interaction.reply({
-                    content: '❌ Failed to change nickname. I might not have permission or the user has a higher role.',
-                    ephemeral: true
+                    content: `🔒 <#${channel.id}> has been locked for ${duration} minutes by <@${member.user.id}>\n**Reason:** ${reason}`
+                });
+                
+                setTimeout(async () => {
+                    await channel.permissionOverwrites.create(guild.roles.everyone, { SendMessages: null });
+                    for (const ownerId of OWNER_IDS) {
+                        const overwrite = channel.permissionOverwrites.cache.get(ownerId);
+                        if (overwrite) await overwrite.delete();
+                    }
+                    await channel.send(`🔓 <#${channel.id}> has been automatically unlocked`);
+                }, duration * 60 * 1000);
+            } else {
+                await interaction.reply({
+                    content: `🔒 <#${channel.id}> has been permanently locked by <@${member.user.id}>\n**Reason:** ${reason}`
                 });
             }
         }
 
-        // Channel topic command
-        else if (commandName === 'topic') {
-            const text = options.getString('text');
+        else if (commandName === 'unlock') {
+            await channel.permissionOverwrites.create(guild.roles.everyone, { SendMessages: null });
+            for (const ownerId of OWNER_IDS) {
+                const overwrite = channel.permissionOverwrites.cache.get(ownerId);
+                if (overwrite) await overwrite.delete();
+            }
+            await interaction.reply({ content: `🔓 <#${channel.id}> has been unlocked by <@${member.user.id}>` });
+        }
 
-            try {
-                await channel.setTopic(text);
-                await interaction.reply({
-                    content: `✅ Channel topic updated to: ${text}`
-                });
-            } catch (error) {
-                console.error('Topic error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to update channel topic. I might not have permission.',
-                    ephemeral: true
-                });
+        else if (commandName === 'slowmode') {
+            const seconds = options.getInteger('seconds');
+            await channel.setRateLimitPerUser(seconds);
+            await interaction.reply({
+                content: seconds === 0 
+                    ? `⏱️ Slowmode disabled in <#${channel.id}> by <@${member.user.id}>`
+                    : `⏱️ Slowmode set to ${seconds} seconds in <#${channel.id}> by <@${member.user.id}>`
+            });
+        }
+
+        // Role Management
+        else if (commandName === 'role') {
+            const subcommand = options.getSubcommand();
+            
+            if (subcommand === 'add') {
+                const user = options.getUser('user');
+                const role = options.getRole('role');
+                
+                const targetMember = await guild.members.fetch(user.id);
+                if (!canManageRoles(member, role)) return await interaction.reply({ content: '❌ Cannot manage this role!', ephemeral: true });
+                if (!canManageMember(member, targetMember)) return await interaction.reply({ content: '❌ Cannot manage this user!', ephemeral: true });
+                
+                await targetMember.roles.add(role);
+                await interaction.reply({ content: `✅ Added <@&${role.id}> to <@${user.id}>` });
+            }
+            
+            else if (subcommand === 'remove') {
+                const user = options.getUser('user');
+                const role = options.getRole('role');
+                
+                const targetMember = await guild.members.fetch(user.id);
+                if (!canManageRoles(member, role)) return await interaction.reply({ content: '❌ Cannot manage this role!', ephemeral: true });
+                if (!canManageMember(member, targetMember)) return await interaction.reply({ content: '❌ Cannot manage this user!', ephemeral: true });
+                
+                await targetMember.roles.remove(role);
+                await interaction.reply({ content: `✅ Removed <@&${role.id}> from <@${user.id}>` });
+            }
+            
+            else if (subcommand === 'info') {
+                const role = options.getRole('role');
+                const embed = new EmbedBuilder()
+                    .setTitle(`Role: ${role.name}`)
+                    .setColor(role.color)
+                    .addFields(
+                        { name: 'ID', value: role.id, inline: true },
+                        { name: 'Color', value: role.hexColor, inline: true },
+                        { name: 'Members', value: role.members.size.toString(), inline: true },
+                        { name: 'Position', value: role.position.toString(), inline: true },
+                        { name: 'Mentionable', value: role.mentionable ? 'Yes' : 'No', inline: true },
+                        { name: 'Hoisted', value: role.hoist ? 'Yes' : 'No', inline: true }
+                    )
+                    .setTimestamp();
+                await interaction.reply({ embeds: [embed] });
             }
         }
 
-        // Announce command
-        else if (commandName === 'announce') {
-            const message = options.getString('message');
-            const targetChannel = options.getChannel('channel') || channel;
+        // Utility Commands
+        else if (commandName === 'userinfo') {
+            const user = options.getUser('user') || interaction.user;
+            const member = await guild.members.fetch(user.id);
+            
+            const embed = new EmbedBuilder()
+                .setTitle(`${user.username}'s Info`)
+                .setColor('Blue')
+                .setThumbnail(user.displayAvatarURL())
+                .addFields(
+                    { name: 'Username', value: user.username, inline: true },
+                    { name: 'Discriminator', value: user.discriminator, inline: true },
+                    { name: 'ID', value: user.id, inline: true },
+                    { name: 'Account Created', value: user.createdAt.toDateString(), inline: true },
+                    { name: 'Joined Server', value: member.joinedAt.toDateString(), inline: true },
+                    { name: 'Roles', value: member.roles.cache.map(r => r.toString()).join(' ') || 'None', inline: false }
+                )
+                .setFooter({ text: `Requested by ${interaction.user.username}` })
+                .setTimestamp();
+            
+            await interaction.reply({ embeds: [embed] });
+        }
 
-            try {
-                await targetChannel.send({
-                    content: `📢 **Announcement**\n\n${message}\n\n*Posted by <@${member.user.id}>*`
-                });
-                await interaction.reply({
-                    content: `✅ Announcement posted in <#${targetChannel.id}>`,
-                    ephemeral: true
-                });
-            } catch (error) {
-                console.error('Announce error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to post announcement. I might not have permission to send messages in that channel.',
+        else if (commandName === 'serverinfo') {
+            const embed = new EmbedBuilder()
+                .setTitle(`${guild.name}'s Info`)
+                .setColor('Green')
+                .setThumbnail(guild.iconURL())
+                .addFields(
+                    { name: 'Server Name', value: guild.name, inline: true },
+                    { name: 'Server ID', value: guild.id, inline: true },
+                    { name: 'Owner', value: `<@${guild.ownerId}>`, inline: true },
+                    { name: 'Members', value: guild.memberCount.toString(), inline: true },
+                    { name: 'Channels', value: guild.channels.cache.size.toString(), inline: true },
+                    { name: 'Roles', value: guild.roles.cache.size.toString(), inline: true },
+                    { name: 'Created', value: guild.createdAt.toDateString(), inline: true }
+                )
+                .setFooter({ text: `Requested by ${interaction.user.username}` })
+                .setTimestamp();
+            
+            await interaction.reply({ embeds: [embed] });
+        }
+
+        else if (commandName === 'avatar') {
+            const user = options.getUser('user') || interaction.user;
+            const embed = new EmbedBuilder()
+                .setTitle(`${user.username}'s Avatar`)
+                .setImage(user.displayAvatarURL({ size: 1024 }))
+                .setFooter({ text: `Requested by ${interaction.user.username}` })
+                .setTimestamp();
+            await interaction.reply({ embeds: [embed] });
+        }
+
+        else if (commandName === 'ping') {
+            const sent = await interaction.reply({ content: 'Pinging...', fetchReply: true });
+            const latency = sent.createdTimestamp - interaction.createdTimestamp;
+            await interaction.editReply(`🏓 Pong! Latency is ${latency}ms. API Latency is ${Math.round(client.ws.ping)}ms`);
+        }
+
+        else if (commandName === 'help') {
+            const embed = new EmbedBuilder()
+                .setTitle('Bot Commands')
+                .setColor('Purple')
+                .setDescription('Here are all available commands:')
+                .addFields(
+                    { name: '🛡️ Moderation', value: '`/mute`, `/unmute`, `/warn`, `/warnings`, `/clearwarns`, `/purge`, `/lock`, `/unlock`, `/slowmode`', inline: false },
+                    { name: '🎭 Role Management', value: '`/role add`, `/role remove`, `/role info`', inline: false },
+                    { name: '🔧 Utility', value: '`/userinfo`, `/serverinfo`, `/avatar`, `/ping`, `/help`', inline: false },
+                    { name: '🎮 Fun', value: '`/8ball`, `/coinflip`, `/roll`, `/rps`', inline: false },
+                    { name: '💰 Economy', value: '`/balance`, `/leaderboard`, `/daily`, `/gamble`', inline: false },
+                    { name: '🗳️ Voting', value: '`/votekick`', inline: false }
+                )
+                .setFooter({ text: 'Use / before each command' });
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        // Fun Commands
+        else if (commandName === '8ball') {
+            const responses = [
+                'It is certain.', 'It is decidedly so.', 'Without a doubt.', 'Yes - definitely.',
+                'You may rely on it.', 'As I see it, yes.', 'Most likely.', 'Outlook good.',
+                'Yes.', 'Signs point to yes.', 'Reply hazy, try again.', 'Ask again later.',
+                'Better not tell you now.', 'Cannot predict now.', 'Concentrate and ask again.',
+                'Don\'t count on it.', 'My reply is no.', 'My sources say no.', 'Outlook not so good.', 'Very doubtful.'
+            ];
+            const response = responses[Math.floor(Math.random() * responses.length)];
+            await interaction.reply({
+                content: `🎱 **Question:** ${options.getString('question')}\n**Answer:** ${response}`
+            });
+        }
+
+        else if (commandName === 'coinflip') {
+            const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
+            await interaction.reply({
+                content: `🪙 You flipped **${result}**!`
+            });
+        }
+
+        else if (commandName === 'roll') {
+            const sides = options.getInteger('sides') || 6;
+            const result = Math.floor(Math.random() * sides) + 1;
+            await interaction.reply({
+                content: `🎲 You rolled a **${result}** on a ${sides}-sided die!`
+            });
+        }
+
+        else if (commandName === 'rps') {
+            const choices = ['rock', 'paper', 'scissors'];
+            const userChoice = options.getString('choice');
+            const botChoice = choices[Math.floor(Math.random() * choices.length)];
+            
+            let result;
+            if (userChoice === botChoice) {
+                result = "It's a tie!";
+            } else if (
+                (userChoice === 'rock' && botChoice === 'scissors') ||
+                (userChoice === 'paper' && botChoice === 'rock') ||
+                (userChoice === 'scissors' && botChoice === 'paper')
+            ) {
+                result = "You win!";
+            } else {
+                result = "I win!";
+            }
+            
+            await interaction.reply({
+                content: `You chose **${userChoice}**, I chose **${botChoice}**.\n**${result}**`
+            });
+        }
+
+        // Economy Commands
+        else if (commandName === 'balance') {
+            const userId = interaction.user.id;
+            if (!userBalances.has(userId)) userBalances.set(userId, 100);
+            await interaction.reply({
+                content: `💰 Your balance: **${userBalances.get(userId)}** coins`
+            });
+        }
+
+        else if (commandName === 'leaderboard') {
+            const sortedUsers = Array.from(userBalances.entries())
+                .map(([userId, balance]) => ({ userId, balance }))
+                .sort((a, b) => b.balance - a.balance)
+                .slice(0, 10);
+            
+            if (sortedUsers.length === 0) {
+                return await interaction.reply({ content: '❌ No users found!', ephemeral: true });
+            }
+            
+            let leaderboardText = '**🏆 Coin Leaderboard**\n\n';
+            sortedUsers.forEach((user, index) => {
+                const position = index + 1;
+                const emoji = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
+                leaderboardText += `${emoji} <@${user.userId}> - ${user.balance} coins\n`;
+            });
+            
+            await interaction.reply({ content: leaderboardText });
+        }
+
+        else if (commandName === 'daily') {
+            const userId = interaction.user.id;
+            const now = Date.now();
+            const lastDaily = userCooldowns.get(`${userId}-daily`) || 0;
+            const cooldown = 86400000; // 24 hours
+            
+            if (now - lastDaily < cooldown) {
+                const remaining = cooldown - (now - lastDaily);
+                const hours = Math.floor(remaining / 3600000);
+                const minutes = Math.floor((remaining % 3600000) / 60000);
+                return await interaction.reply({
+                    content: `❌ You can claim your daily reward in ${hours}h ${minutes}m!`,
                     ephemeral: true
                 });
             }
+            
+            if (!userBalances.has(userId)) userBalances.set(userId, 100);
+            const newBalance = userBalances.get(userId) + 100;
+            userBalances.set(userId, newBalance);
+            userCooldowns.set(`${userId}-daily`, now);
+            
+            await interaction.reply({
+                content: `✅ You claimed your daily reward of 100 coins!\nNew balance: ${newBalance} coins`
+            });
         }
 
-        // Gamble command
         else if (commandName === 'gamble') {
             const amount = options.getInteger('amount');
-            const userId = member.user.id;
-
-            // Initialize user balance if not exists
-            if (!userBalances.has(userId)) {
-                userBalances.set(userId, 100); // Starting balance
-            }
-
+            const userId = interaction.user.id;
+            
+            if (!userBalances.has(userId)) userBalances.set(userId, 100);
             const balance = userBalances.get(userId);
-
-            // Check if user has enough coins
+            
             if (amount > balance) {
                 return await interaction.reply({
                     content: `❌ You don't have enough coins! Your balance: ${balance} coins`,
                     ephemeral: true
                 });
             }
-
-            // Check cooldown
-            const lastGamble = userCooldowns.get(userId) || 0;
+            
+            const lastGamble = userCooldowns.get(`${userId}-gamble`) || 0;
             const now = Date.now();
-            const cooldownTime = 30000; // 30 seconds cooldown
-
+            const cooldownTime = 30000; // 30 seconds
+            
             if (now - lastGamble < cooldownTime) {
                 const remaining = Math.ceil((cooldownTime - (now - lastGamble)) / 1000);
                 return await interaction.reply({
@@ -1028,203 +666,122 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
             }
-
-            // Set cooldown
-            userCooldowns.set(userId, now);
-
-            // 50% chance to win
+            
+            userCooldowns.set(`${userId}-gamble`, now);
             const isWin = Math.random() < 0.5;
-            let newBalance;
-
-            if (isWin) {
-                newBalance = balance + amount;
-                userBalances.set(userId, newBalance);
-                await interaction.reply({
-                    content: `🎉 You won ${amount} coins!\nNew balance: ${newBalance} coins`
-                });
-            } else {
-                newBalance = balance - amount;
-                userBalances.set(userId, newBalance);
-                await interaction.reply({
-                    content: `😢 You lost ${amount} coins!\nNew balance: ${newBalance} coins`
-                });
-            }
-        }
-
-        // Balance command
-        else if (commandName === 'balance') {
-            const userId = member.user.id;
-
-            // Initialize user balance if not exists
-            if (!userBalances.has(userId)) {
-                userBalances.set(userId, 100); // Starting balance
-            }
-
-            const balance = userBalances.get(userId);
+            const newBalance = isWin ? balance + amount : balance - amount;
+            userBalances.set(userId, newBalance);
+            
             await interaction.reply({
-                content: `💰 Your balance: ${balance} coins`
+                content: isWin 
+                    ? `🎉 You won ${amount} coins!\nNew balance: ${newBalance} coins` 
+                    : `😢 You lost ${amount} coins!\nNew balance: ${newBalance} coins`
             });
         }
 
-        // Leaderboard command
-        else if (commandName === 'leaderboard') {
-            // Convert map to array and sort by balance
-            const sortedUsers = Array.from(userBalances.entries())
-                .map(([userId, balance]) => ({ userId, balance }))
-                .sort((a, b) => b.balance - a.balance)
-                .slice(0, 10); // Top 10
-
-            if (sortedUsers.length === 0) {
-                return await interaction.reply({
-                    content: '❌ No users found in the leaderboard!',
-                    ephemeral: true
-                });
-            }
-
-            let leaderboardText = '**🏆 Coin Leaderboard**\n\n';
-            sortedUsers.forEach((user, index) => {
-                const position = index + 1;
-                const emoji = position === 1 ? '🥇' : position === 2 ? '🥈' : position === 3 ? '🥉' : `#${position}`;
-                leaderboardText += `${emoji} <@${user.userId}> - ${user.balance} coins\n`;
-            });
-
-            await interaction.reply({
-                content: leaderboardText
-            });
-        }
-
-        // Vote kick command
+        // Voting Commands
         else if (commandName === 'votekick') {
             const targetUser = options.getUser('user');
             const reason = options.getString('reason') || 'No reason provided';
-
-            // Check if target is the command user
-            if (targetUser.id === member.user.id) {
-                return await interaction.reply({
-                    content: '❌ You cannot votekick yourself!',
-                    ephemeral: true
-                });
+            
+            if (targetUser.id === interaction.user.id) {
+                return await interaction.reply({ content: '❌ You cannot votekick yourself!', ephemeral: true });
             }
-
-            // Check if target is a bot
+            
             if (targetUser.bot) {
-                return await interaction.reply({
-                    content: '❌ You cannot votekick bots!',
-                    ephemeral: true
-                });
+                return await interaction.reply({ content: '❌ You cannot votekick bots!', ephemeral: true });
             }
-
-            // Check votekick cooldown for this user
+            
             const lastVoteKick = voteKickCooldowns.get(targetUser.id) || 0;
             const now = Date.now();
-            const cooldownTime = 600000; // 10 minutes cooldown
-
+            const cooldownTime = 600000; // 10 minutes
+            
             if (now - lastVoteKick < cooldownTime) {
                 const remaining = Math.ceil((cooldownTime - (now - lastVoteKick)) / 60000);
                 return await interaction.reply({
-                    content: `❌ This user was recently in a votekick! Please wait ${remaining} minutes before starting another votekick.`,
+                    content: `❌ This user was recently in a votekick! Please wait ${remaining} minutes.`,
                     ephemeral: true
                 });
             }
-
-            // Check if there's already a votekick in this channel
+            
             if (voteKicks.has(channel.id)) {
-                return await interaction.reply({
-                    content: '❌ There is already an active votekick in this channel!',
-                    ephemeral: true
-                });
+                return await interaction.reply({ content: '❌ There is already an active votekick!', ephemeral: true });
             }
-
-            // Create votekick
+            
             const voteKickData = {
                 targetUser: targetUser,
-                votes: 1, // Creator's vote
-                voters: [member.user.id],
+                votes: 1,
+                voters: [interaction.user.id],
                 startTime: now,
                 reason: reason
             };
-
+            
             voteKicks.set(channel.id, voteKickData);
-
-            // Set cooldown for target user
             voteKickCooldowns.set(targetUser.id, now);
-
-            // Send votekick message
+            
             const voteKickMessage = await interaction.reply({
                 content: `🗳️ **VOTEKICK STARTED**\n\n<@${targetUser.id}> is being voted to be kicked!\n**Reason:** ${reason}\n\n✅ Votes: 1/5\n\nReact with ✅ to vote YES\nReact with ❌ to vote NO\n\nVoting ends in 60 seconds!`,
                 fetchReply: true
             });
-
-            // Add reactions
+            
             await voteKickMessage.react('✅');
             await voteKickMessage.react('❌');
-
-            // Collect reactions
-            const filter = (reaction, user) => {
-                return ['✅', '❌'].includes(reaction.emoji.name) && !user.bot;
-            };
-
-            const collector = voteKickMessage.createReactionCollector({ 
-                filter, 
-                time: 60000 // 60 seconds
-            });
-
+            
+            const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && !user.bot;
+            const collector = voteKickMessage.createReactionCollector({ filter, time: 60000 });
+            
             collector.on('collect', async (reaction, user) => {
-                // Check if user already voted
-                if (voteKicks.get(channel.id).voters.includes(user.id)) {
-                    return;
-                }
-
-                // Add vote
+                if (voteKicks.get(channel.id).voters.includes(user.id)) return;
+                
                 const currentData = voteKicks.get(channel.id);
                 currentData.voters.push(user.id);
-                
-                if (reaction.emoji.name === '✅') {
-                    currentData.votes++;
-                }
-                
+                if (reaction.emoji.name === '✅') currentData.votes++;
                 voteKicks.set(channel.id, currentData);
                 
-                // Update message
                 const updatedVotes = voteKicks.get(channel.id).votes;
                 await voteKickMessage.edit({
                     content: `🗳️ **VOTEKICK STARTED**\n\n<@${targetUser.id}> is being voted to be kicked!\n**Reason:** ${reason}\n\n✅ Votes: ${updatedVotes}/5\n\nReact with ✅ to vote YES\nReact with ❌ to vote NO\n\nVoting ends in 60 seconds!`
                 });
             });
-
-            collector.on('end', async (collected) => {
+            
+            collector.on('end', async () => {
                 const finalData = voteKicks.get(channel.id);
                 if (!finalData) return;
-
-                // Remove from active votekicks
                 voteKicks.delete(channel.id);
-
+                
                 if (finalData.votes >= 5) {
-                    // Kick the user
                     try {
-                        const targetMember = await interaction.guild.members.fetch(finalData.targetUser.id);
+                        const targetMember = await guild.members.fetch(finalData.targetUser.id);
                         if (targetMember) {
                             await targetMember.kick(`Votekick: ${finalData.reason}`);
                             await interaction.followUp({
-                                content: `✅ <@${finalData.targetUser.id}> has been kicked by community vote!\n**Reason:** ${finalData.reason}`
-                            });
-                        } else {
-                            await interaction.followUp({
-                                content: `❌ <@${finalData.targetUser.id}> left the server before being kicked.`
+                                content: `✅ <@${finalData.targetUser.id}> has been kicked by community vote!`
                             });
                         }
                     } catch (error) {
-                        console.error('Votekick error:', error);
                         await interaction.followUp({
-                            content: `❌ Failed to kick <@${finalData.targetUser.id}>. I might not have permission.`
+                            content: `❌ Failed to kick <@${finalData.targetUser.id}>.`
                         });
                     }
                 } else {
                     await interaction.followUp({
-                        content: `❌ Votekick failed. Only ${finalData.votes}/5 votes were received for <@${finalData.targetUser.id}>.`
+                        content: `❌ Votekick failed. Only ${finalData.votes}/5 votes were received.`
                     });
                 }
             });
+        }
+
+        // Starboard Commands
+        else if (commandName === 'starboard') {
+            const subcommand = options.getSubcommand();
+            
+            if (subcommand === 'setchannel') {
+                // In a real implementation, you'd save this to a database
+                await interaction.reply({ content: '✅ Starboard channel set!', ephemeral: true });
+            } else if (subcommand === 'threshold') {
+                // In a real implementation, you'd save this to a database
+                await interaction.reply({ content: '✅ Star threshold set!', ephemeral: true });
+            }
         }
 
     } catch (error) {
@@ -1240,6 +797,59 @@ client.on(Events.InteractionCreate, async interaction => {
                 ephemeral: true
             });
         }
+    }
+});
+
+// Starboard functionality
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+    if (reaction.emoji.name !== '⭐') return;
+    if (user.bot) return;
+    
+    const message = reaction.message;
+    if (!starboardMessages.has(message.id)) {
+        starboardMessages.set(message.id, 1);
+    } else {
+        starboardMessages.set(message.id, starboardMessages.get(message.id) + 1);
+    }
+    
+    const starCount = starboardMessages.get(message.id);
+    if (starCount >= 3) { // Star threshold
+        const starboardChannel = message.guild.channels.cache.get(starboardChannelId);
+        if (starboardChannel) {
+            const embed = new EmbedBuilder()
+                .setColor('Gold')
+                .setAuthor({ name: message.author.username, iconURL: message.author.displayAvatarURL() })
+                .setDescription(message.content)
+                .addFields({ name: 'Source', value: `[Jump to message](${message.url})`, inline: true })
+                .addFields({ name: 'Stars', value: `⭐ ${starCount}`, inline: true })
+                .setTimestamp();
+            
+            if (message.attachments.size > 0) {
+                embed.setImage(message.attachments.first().url);
+            }
+            
+            await starboardChannel.send({ embeds: [embed] });
+        }
+    }
+});
+
+// Welcome message
+client.on(Events.GuildMemberAdd, async member => {
+    const welcomeChannel = member.guild.systemChannel;
+    if (welcomeChannel) {
+        await welcomeChannel.send({
+            content: `Welcome to the server, <@${member.user.id}>! 🎉`
+        });
+    }
+});
+
+// Goodbye message
+client.on(Events.GuildMemberRemove, async member => {
+    const goodbyeChannel = member.guild.systemChannel;
+    if (goodbyeChannel) {
+        await goodbyeChannel.send({
+            content: `Goodbye, ${member.user.username}! 👋`
+        });
     }
 });
 
