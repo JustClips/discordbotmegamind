@@ -8,6 +8,7 @@ const axios = require('axios');
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 
 // Create a new client instance
 const client = new Client({ 
@@ -18,7 +19,8 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildPresences,
         GatewayIntentBits.GuildModeration,
-        GatewayIntentBits.GuildMessageReactions
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildMessageTyping
     ] 
 });
 
@@ -35,6 +37,7 @@ function hasPermission(member) {
 
 // Data file path
 const DATA_FILE = './memberData.json';
+const STRIKES_FILE = './strikes.json';
 
 // Load member data from file
 async function loadMemberData(guildId) {
@@ -62,6 +65,25 @@ async function saveMemberData(guildId, data) {
         await fs.writeFile(DATA_FILE, JSON.stringify(allData, null, 2));
     } catch (error) {
         console.error('Error saving member data:', error);
+    }
+}
+
+// Load strikes data
+async function loadStrikes() {
+    try {
+        const data = await fs.readFile(STRIKES_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        return {};
+    }
+}
+
+// Save strikes data
+async function saveStrikes(strikes) {
+    try {
+        await fs.writeFile(STRIKES_FILE, JSON.stringify(strikes, null, 2));
+    } catch (error) {
+        console.error('Error saving strikes:', error);
     }
 }
 
@@ -100,15 +122,69 @@ async function recordMemberCount(guild) {
     return filteredData;
 }
 
+// Log deleted messages
+async function logDeletedMessage(message, reason, actionBy = null) {
+    try {
+        const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+        if (!logChannel) return;
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🚨 Message Deleted')
+            .setColor(0xED4245)
+            .addFields(
+                { name: 'User', value: `<@${message.author.id}> (${message.author.tag})`, inline: true },
+                { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
+                { name: 'Reason', value: reason, inline: false },
+                { name: 'Content', value: message.content.length > 1024 ? message.content.substring(0, 1021) + '...' : message.content || '*No content*', inline: false }
+            )
+            .setTimestamp();
+            
+        if (actionBy) {
+            embed.addFields({ name: 'Action By', value: `<@${actionBy.id}> (${actionBy.tag})`, inline: false });
+        }
+            
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error logging deleted message:', error);
+    }
+}
+
+// Log moderation actions
+async function logModerationAction(action, user, moderator, reason, duration = null) {
+    try {
+        const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
+        if (!logChannel) return;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`🔨 ${action}`)
+            .setColor(action.includes('Mute') ? 0xFEE75C : 0x57F287)
+            .addFields(
+                { name: 'User', value: `<@${user.id}> (${user.tag})`, inline: true },
+                { name: 'Moderator', value: `<@${moderator.id}> (${moderator.tag})`, inline: true },
+                { name: 'Reason', value: reason, inline: false }
+            )
+            .setTimestamp();
+            
+        if (duration) {
+            embed.addFields({ name: 'Duration', value: `${duration} minutes`, inline: true });
+        }
+            
+        await logChannel.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error logging moderation action:', error);
+    }
+}
+
 // Auto-moderation patterns
 const scamLinks = [
     'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
-    'free-nitro', 'nitro-free', 'steamcomminuty', 'steamcommunlty', 'robuxfree',
+    'free-nitro', 'nitro-free', 'free discord nitro', 'claim nitro',
+    'steamcomminuty', 'steamcommunlty', 'robuxfree',
     'paypal', 'cashapp', 'venmo', 'zelle', 'westernunion', 'moneygram'
 ];
 
 const scamKeywords = [
-    'free nitro', 'nitro for free', 'free discord nitro', 'claim nitro',
+    'free nitro', 'nitro for free', 'claim nitro',
     'steam wallet', 'free robux', 'robux generator', 'paypal money',
     'cash app hack', 'get free money', 'make money fast', 'easy money'
 ];
@@ -183,7 +259,7 @@ async function checkWithGemini(content) {
     }
 }
 
-// Auto-moderation function
+// Auto-moderation function with strike system
 async function autoModerate(message) {
     // Skip bot messages and users with permissions
     if (message.author.bot || hasPermission(message.member)) return false;
@@ -192,44 +268,139 @@ async function autoModerate(message) {
     
     // Check for spam (too many mentions)
     if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
-        await muteUser(message.member, 10, 'Mention spam detected');
-        await message.delete().catch(() => {});
-        return true;
+        return await handleViolation(message, 'Mention spam detected', 10);
     }
     
     // Check for link spam
     const links = content.match(/https?:\/\/[^\s]+/g) || [];
     if (links.length > 3) {
-        await muteUser(message.member, 15, 'Link spam detected');
-        await message.delete().catch(() => {});
-        return true;
+        return await handleViolation(message, 'Link spam detected', 15);
     }
     
     // Check for scam content
     if (containsScamContent(content)) {
-        await muteUser(message.member, 30, 'Scam content detected');
-        await message.delete().catch(() => {});
-        return true;
+        return await handleViolation(message, 'Scam content detected', 30);
     }
     
     // Check for NSFW content
     if (containsNSFWContent(content)) {
-        await muteUser(message.member, 20, 'Inappropriate content detected');
-        await message.delete().catch(() => {});
-        return true;
+        return await handleViolation(message, 'Inappropriate content detected', 20);
     }
     
     // Check with Gemini AI if enabled
     if (GEMINI_API_KEY) {
         const geminiResult = await checkWithGemini(content);
         if (geminiResult.isViolation) {
-            await muteUser(message.member, 25, `AI detected violation: ${geminiResult.reason}`);
-            await message.delete().catch(() => {});
-            return true;
+            return await handleViolation(message, `AI detected violation: ${geminiResult.reason}`, 25);
         }
     }
     
     return false;
+}
+
+// Handle violations with strike system
+async function handleViolation(message, reason, muteDuration) {
+    try {
+        const strikes = await loadStrikes();
+        const userId = message.author.id;
+        const guildId = message.guild.id;
+        const userKey = `${guildId}-${userId}`;
+        
+        // Initialize strikes for user if not exists
+        if (!strikes[userKey]) {
+            strikes[userKey] = 0;
+        }
+        
+        strikes[userKey] += 1;
+        await saveStrikes(strikes);
+        
+        // First strike - warning
+        if (strikes[userKey] === 1) {
+            // Send DM warning
+            try {
+                await message.author.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('⚠️ Warning')
+                        .setDescription(`You've received a warning in **${message.guild.name}**\n**Reason:** ${reason}\n\nPlease follow the server rules to avoid further action.`)
+                        .setColor(0xFEE75C)
+                        .setTimestamp()
+                    ]
+                });
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+            
+            // Delete message
+            await message.delete().catch(() => {});
+            await logDeletedMessage(message, `1st Strike - ${reason}`);
+            
+            // Show temporary warning message
+            const warningMsg = await message.channel.send({
+                content: `⚠️ <@${message.author.id}> Your message was removed. This is your first warning.\n**Reason:** ${reason}`
+            });
+            
+            // Delete warning after 1 minute
+            setTimeout(() => {
+                warningMsg.delete().catch(() => {});
+            }, 60000);
+            
+            return true;
+        }
+        
+        // Second strike - delete and warn again
+        if (strikes[userKey] === 2) {
+            // Send DM warning
+            try {
+                await message.author.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('⚠️ Final Warning')
+                        .setDescription(`This is your **final warning** in **${message.guild.name}**\n**Reason:** ${reason}\n\nFurther violations will result in a mute.`)
+                        .setColor(0xED4245)
+                        .setTimestamp()
+                    ]
+                });
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+            
+            // Delete message
+            await message.delete().catch(() => {});
+            await logDeletedMessage(message, `2nd Strike - ${reason}`);
+            
+            // Show temporary warning message
+            const warningMsg = await message.channel.send({
+                content: `⚠️ <@${message.author.id}> This is your **final warning**. Further violations will result in a mute.\n**Reason:** ${reason}`
+            });
+            
+            // Delete warning after 1 minute
+            setTimeout(() => {
+                warningMsg.delete().catch(() => {});
+            }, 60000);
+            
+            return true;
+        }
+        
+        // Third strike and beyond - mute user
+        await muteUser(message.member, muteDuration, reason);
+        await message.delete().catch(() => {});
+        await logDeletedMessage(message, `Strike ${strikes[userKey]} - Muted for ${muteDuration} minutes - ${reason}`);
+        await logModerationAction('Mute (Auto)', message.author, client.user, reason, muteDuration);
+        
+        // Show temporary mute message
+        const muteMsg = await message.channel.send({
+            content: `🔇 <@${message.author.id}> has been muted for ${muteDuration} minutes.\n**Reason:** ${reason}`
+        });
+        
+        // Delete mute message after 1 minute
+        setTimeout(() => {
+            muteMsg.delete().catch(() => {});
+        }, 60000);
+        
+        return true;
+    } catch (error) {
+        console.error('Violation handling error:', error);
+        return false;
+    }
 }
 
 // Mute user function
@@ -508,14 +679,29 @@ client.on(Events.MessageCreate, async message => {
             const muteDuration = duration * 60 * 1000;
             await member.timeout(muteDuration, reason);
             
-            message.reply(`✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}`);
+            const reply = await message.reply(`✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}`);
+            
+            // Log action
+            await logModerationAction('Mute', user, message.author, reason, duration);
             
             // Send DM to user
             try {
-                await user.send(`You have been muted in ${message.guild.name} for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+                await user.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('🔇 You Have Been Muted')
+                        .setDescription(`You have been muted in **${message.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                        .setColor(0xED4245)
+                        .setTimestamp()
+                    ]
+                });
             } catch (error) {
                 console.log('Could not send DM to user');
             }
+            
+            // Delete reply after 1 minute
+            setTimeout(() => {
+                reply.delete().catch(() => {});
+            }, 60000);
         }
         
         else if (command === 'unmute') {
@@ -534,14 +720,29 @@ client.on(Events.MessageCreate, async message => {
             
             try {
                 await member.timeout(null);
-                message.reply(`✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}`);
+                const reply = await message.reply(`✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}`);
+                
+                // Log action
+                await logModerationAction('Unmute', user, message.author, reason);
                 
                 // Send DM to user
                 try {
-                    await user.send(`You have been unmuted in ${message.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+                    await user.send({
+                        embeds: [new EmbedBuilder()
+                            .setTitle('🔊 You Have Been Unmuted')
+                            .setDescription(`You have been unmuted in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                            .setColor(0x57F287)
+                            .setTimestamp()
+                        ]
+                    });
                 } catch (error) {
                     console.log('Could not send DM to user');
                 }
+                
+                // Delete reply after 1 minute
+                setTimeout(() => {
+                    reply.delete().catch(() => {});
+                }, 60000);
             } catch (error) {
                 console.error('Unmute error:', error);
                 message.reply('❌ Failed to unmute the user.');
@@ -558,8 +759,16 @@ client.on(Events.MessageCreate, async message => {
                 await message.delete(); // Delete the command message
                 const fetched = await message.channel.messages.fetch({ limit: amount });
                 await message.channel.bulkDelete(fetched, true);
+                
+                // Log action
+                await logDeletedMessage({
+                    author: message.author,
+                    channel: message.channel,
+                    content: `!purge ${amount}`
+                }, `Purged ${fetched.size} messages`, message.author);
+                
                 const confirmMsg = await message.channel.send(`✅ Successfully deleted ${fetched.size} messages!`);
-                setTimeout(() => confirmMsg.delete().catch(() => {}), 5000);
+                setTimeout(() => confirmMsg.delete().catch(() => {}), 60000);
             } catch (error) {
                 console.error('Purge error:', error);
                 message.reply('❌ Failed to delete messages.');
@@ -583,9 +792,12 @@ client.on(Events.MessageCreate, async message => {
                     });
                 }
                 
+                const reply = await message.reply(`🔒 Channel has been locked\n**Reason:** ${reason}`);
+                
+                // Log action
+                await logModerationAction('Lock Channel', message.guild, message.author, reason);
+                
                 if (duration > 0) {
-                    message.reply(`🔒 Channel has been locked for ${duration} minutes\n**Reason:** ${reason}`);
-                    
                     // Schedule automatic unlock
                     setTimeout(async () => {
                         try {
@@ -606,9 +818,12 @@ client.on(Events.MessageCreate, async message => {
                             console.error('Auto-unlock error:', error);
                         }
                     }, duration * 60 * 1000);
-                } else {
-                    message.reply(`🔒 Channel has been permanently locked\n**Reason:** ${reason}`);
                 }
+                
+                // Delete reply after 1 minute
+                setTimeout(() => {
+                    reply.delete().catch(() => {});
+                }, 60000);
             } catch (error) {
                 console.error('Lock error:', error);
                 message.reply('❌ Failed to lock the channel.');
@@ -629,7 +844,15 @@ client.on(Events.MessageCreate, async message => {
                     }
                 }
                 
-                message.reply('🔓 Channel has been unlocked');
+                const reply = await message.reply('🔓 Channel has been unlocked');
+                
+                // Log action
+                await logModerationAction('Unlock Channel', message.guild, message.author, 'Channel unlocked');
+                
+                // Delete reply after 1 minute
+                setTimeout(() => {
+                    reply.delete().catch(() => {});
+                }, 60000);
             } catch (error) {
                 console.error('Unlock error:', error);
                 message.reply('❌ Failed to unlock the channel.');
@@ -657,14 +880,29 @@ client.on(Events.MessageCreate, async message => {
                 timestamp: new Date()
             });
             
-            message.reply(`⚠️ <@${user.id}> has been warned.\n**Reason:** ${reason}`);
+            const reply = await message.reply(`⚠️ <@${user.id}> has been warned.\n**Reason:** ${reason}`);
+            
+            // Log action
+            await logModerationAction('Warn', user, message.author, reason);
             
             // Send DM to user
             try {
-                await user.send(`You have been warned in ${message.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`);
+                await user.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('⚠️ You Have Been Warned')
+                        .setDescription(`You have been warned in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                        .setColor(0xFEE75C)
+                        .setTimestamp()
+                    ]
+                });
             } catch (error) {
                 console.log('Could not send DM to user');
             }
+            
+            // Delete reply after 1 minute
+            setTimeout(() => {
+                reply.delete().catch(() => {});
+            }, 60000);
         }
         
         else if (command === 'nick') {
@@ -679,9 +917,25 @@ client.on(Events.MessageCreate, async message => {
             try {
                 await member.setNickname(nickname);
                 if (nickname) {
-                    message.reply(`✅ Changed nickname of <@${user.id}> to ${nickname}`);
+                    const reply = await message.reply(`✅ Changed nickname of <@${user.id}> to ${nickname}`);
+                    
+                    // Log action
+                    await logModerationAction('Nickname Change', user, message.author, `Changed to: ${nickname}`);
+                    
+                    // Delete reply after 1 minute
+                    setTimeout(() => {
+                        reply.delete().catch(() => {});
+                    }, 60000);
                 } else {
-                    message.reply(`✅ Reset nickname of <@${user.id}>`);
+                    const reply = await message.reply(`✅ Reset nickname of <@${user.id}>`);
+                    
+                    // Log action
+                    await logModerationAction('Nickname Reset', user, message.author, 'Nickname reset');
+                    
+                    // Delete reply after 1 minute
+                    setTimeout(() => {
+                        reply.delete().catch(() => {});
+                    }, 60000);
                 }
             } catch (error) {
                 console.error('Nickname error:', error);
@@ -698,9 +952,25 @@ client.on(Events.MessageCreate, async message => {
             try {
                 await message.channel.setRateLimitPerUser(seconds);
                 if (seconds === 0) {
-                    message.reply('⏱️ Slowmode has been disabled');
+                    const reply = await message.reply('⏱️ Slowmode has been disabled');
+                    
+                    // Log action
+                    await logModerationAction('Slowmode Disabled', message.guild, message.author, 'Slowmode disabled');
+                    
+                    // Delete reply after 1 minute
+                    setTimeout(() => {
+                        reply.delete().catch(() => {});
+                    }, 60000);
                 } else {
-                    message.reply(`⏱️ Slowmode has been set to ${seconds} seconds`);
+                    const reply = await message.reply(`⏱️ Slowmode has been set to ${seconds} seconds`);
+                    
+                    // Log action
+                    await logModerationAction('Slowmode Set', message.guild, message.author, `Set to ${seconds} seconds`);
+                    
+                    // Delete reply after 1 minute
+                    setTimeout(() => {
+                        reply.delete().catch(() => {});
+                    }, 60000);
                 }
             } catch (error) {
                 console.error('Slowmode error:', error);
@@ -725,18 +995,7 @@ client.on(Events.MessageCreate, async message => {
     // Auto-moderate the message
     const wasModerated = await autoModerate(message);
     
-    if (wasModerated) {
-        // Send warning to channel (ephemeral-like)
-        const warning = await message.channel.send({
-            content: `⚠️ <@${message.author.id}> Your message was removed for violating server rules.`,
-            ephemeral: true
-        });
-        
-        // Delete warning after 10 seconds
-        setTimeout(() => {
-            warning.delete().catch(() => {});
-        }, 10000);
-    }
+    // Note: Warning messages are handled in autoModerate function
 });
 
 // Handle interactions (slash commands)
@@ -793,9 +1052,19 @@ client.on(Events.InteractionCreate, async interaction => {
                 content: `✅ <@${user.id}> has been muted for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
             });
 
+            // Log action
+            await logModerationAction('Mute', user, member.user, reason, duration);
+            
             // Send DM to user with moderator info
             try {
-                await user.send(`You have been muted in ${interaction.guild.name} for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
+                await user.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('🔇 You Have Been Muted')
+                        .setDescription(`You have been muted in **${interaction.guild.name}** for ${duration} minutes.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                        .setColor(0xED4245)
+                        .setTimestamp()
+                    ]
+                });
             } catch (error) {
                 console.log('Could not send DM to user');
             }
@@ -831,9 +1100,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     content: `✅ <@${user.id}> has been unmuted.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
                 });
 
+                // Log action
+                await logModerationAction('Unmute', user, member.user, reason);
+                
                 // Send DM to user with moderator info
                 try {
-                    await user.send(`You have been unmuted in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
+                    await user.send({
+                        embeds: [new EmbedBuilder()
+                            .setTitle('🔊 You Have Been Unmuted')
+                            .setDescription(`You have been unmuted in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                            .setColor(0x57F287)
+                            .setTimestamp()
+                        ]
+                    });
                 } catch (error) {
                     console.log('Could not send DM to user');
                 }
@@ -885,12 +1164,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
 
-                // Delete the success message after 5 seconds
+                // Log action
+                await logDeletedMessage({
+                    author: member.user,
+                    channel: channel,
+                    content: `/purge ${amount}`
+                }, `Purged ${deletedCount} messages`, member.user);
+
+                // Delete the success message after 1 minute
                 setTimeout(() => {
                     if (reply.deletable) {
                         reply.delete().catch(console.error);
                     }
-                }, 5000);
+                }, 60000);
             } catch (error) {
                 console.error('Purge error:', error);
                 await interaction.editReply({
@@ -945,12 +1231,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
 
-                // Delete the success message after 5 seconds
+                // Log action
+                await logDeletedMessage({
+                    author: member.user,
+                    channel: channel,
+                    content: `/purgehumans ${amount}`
+                }, `Purged ${deletedCount} human messages`, member.user);
+
+                // Delete the success message after 1 minute
                 setTimeout(() => {
                     if (reply.deletable) {
                         reply.delete().catch(console.error);
                     }
-                }, 5000);
+                }, 60000);
             } catch (error) {
                 console.error('Purge humans error:', error);
                 await interaction.editReply({
@@ -1005,12 +1298,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
 
-                // Delete the success message after 5 seconds
+                // Log action
+                await logDeletedMessage({
+                    author: member.user,
+                    channel: channel,
+                    content: `/purgebots ${amount}`
+                }, `Purged ${deletedCount} bot messages`, member.user);
+
+                // Delete the success message after 1 minute
                 setTimeout(() => {
                     if (reply.deletable) {
                         reply.delete().catch(console.error);
                     }
-                }, 5000);
+                }, 60000);
             } catch (error) {
                 console.error('Purge bots error:', error);
                 await interaction.editReply({
@@ -1045,6 +1345,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     await interaction.reply({
                         content: `🔒 <#${channel.id}> has been locked by <@${member.user.id}> for ${duration} minutes\n**Reason:** ${reason}`
                     });
+
+                    // Log action
+                    await logModerationAction('Lock Channel', interaction.guild, member.user, reason);
 
                     // Schedule automatic unlock
                     setTimeout(async () => {
@@ -1087,6 +1390,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     await interaction.reply({
                         content: `🔒 <#${channel.id}> has been permanently locked by <@${member.user.id}>\n**Reason:** ${reason}`
                     });
+                    
+                    // Log action
+                    await logModerationAction('Lock Channel (Permanent)', interaction.guild, member.user, reason);
                 }
 
                 // Log to console
@@ -1131,6 +1437,9 @@ client.on(Events.InteractionCreate, async interaction => {
                         content: `🔓 <#${channel.id}> has been unlocked by <@${member.user.id}>`
                     });
                 }
+                
+                // Log action
+                await logModerationAction('Unlock Channel', interaction.guild, member.user, 'Channel unlocked');
 
                 // Log to console
                 console.log(`${channel.name} unlocked by ${member.user.tag}`);
@@ -1154,10 +1463,16 @@ client.on(Events.InteractionCreate, async interaction => {
                     await interaction.reply({
                         content: `⏱️ Slowmode has been disabled in <#${channel.id}> by <@${member.user.id}>`
                     });
+                    
+                    // Log action
+                    await logModerationAction('Slowmode Disabled', interaction.guild, member.user, 'Slowmode disabled');
                 } else {
                     await interaction.reply({
                         content: `⏱️ Slowmode has been set to ${seconds} seconds in <#${channel.id}> by <@${member.user.id}>`
                     });
+                    
+                    // Log action
+                    await logModerationAction('Slowmode Set', interaction.guild, member.user, `Set to ${seconds} seconds`);
                 }
 
                 // Log to console
@@ -1200,9 +1515,19 @@ client.on(Events.InteractionCreate, async interaction => {
                 content: `⚠️ <@${user.id}> has been warned.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
             });
 
+            // Log action
+            await logModerationAction('Warn', user, member.user, reason);
+            
             // Send DM to user
             try {
-                await user.send(`You have been warned in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`);
+                await user.send({
+                    embeds: [new EmbedBuilder()
+                        .setTitle('⚠️ You Have Been Warned')
+                        .setDescription(`You have been warned in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                        .setColor(0xFEE75C)
+                        .setTimestamp()
+                    ]
+                });
             } catch (error) {
                 console.log('Could not send DM to user');
             }
@@ -1247,12 +1572,19 @@ client.on(Events.InteractionCreate, async interaction => {
                     ephemeral: true
                 });
 
-                // Delete the success message after 5 seconds
+                // Log action
+                await logDeletedMessage({
+                    author: member.user,
+                    channel: channel,
+                    content: `/clearuser ${user.id} ${amount}`
+                }, `Cleared ${deletedCount} messages from user`, member.user);
+
+                // Delete the success message after 1 minute
                 setTimeout(() => {
                     if (reply.deletable) {
                         reply.delete().catch(console.error);
                     }
-                }, 5000);
+                }, 60000);
             } catch (error) {
                 console.error('Clear user error:', error);
                 await interaction.editReply({
@@ -1282,10 +1614,16 @@ client.on(Events.InteractionCreate, async interaction => {
                     await interaction.reply({
                         content: `✅ Changed nickname of <@${user.id}> to ${nickname}`
                     });
+                    
+                    // Log action
+                    await logModerationAction('Nickname Change', user, member.user, `Changed to: ${nickname}`);
                 } else {
                     await interaction.reply({
                         content: `✅ Reset nickname of <@${user.id}>`
                     });
+                    
+                    // Log action
+                    await logModerationAction('Nickname Reset', user, member.user, 'Nickname reset');
                 }
             } catch (error) {
                 console.error('Nickname error:', error);
@@ -1305,6 +1643,9 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.reply({
                     content: `✅ Channel topic updated to: ${text}`
                 });
+                
+                // Log action
+                await logModerationAction('Channel Topic Change', interaction.guild, member.user, `Set to: ${text}`);
             } catch (error) {
                 console.error('Topic error:', error);
                 await interaction.reply({
@@ -1327,6 +1668,9 @@ client.on(Events.InteractionCreate, async interaction => {
                     content: `✅ Announcement posted in <#${targetChannel.id}>`,
                     ephemeral: true
                 });
+                
+                // Log action
+                await logModerationAction('Announcement', interaction.guild, member.user, `Posted in #${targetChannel.name}: ${message.substring(0, 100)}...`);
             } catch (error) {
                 console.error('Announce error:', error);
                 await interaction.reply({
