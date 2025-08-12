@@ -10,6 +10,9 @@ const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['Y
 const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+// Channels to exclude from AI analysis
+const EXCLUDED_CHANNELS = ['1402359842055651329', '1364387827386683484'];
+
 // Initialize OpenAI client
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
@@ -762,6 +765,9 @@ function containsNSFWContent(content) {
 async function autoModerate(message) {
     // Skip bot messages and users with permissions
     if (message.author.bot || hasPermission(message.member)) return false;
+    
+    // Skip messages in excluded channels
+    if (EXCLUDED_CHANNELS.includes(message.channel.id)) return false;
     
     const content = message.content;
     
@@ -1829,6 +1835,9 @@ client.on(Events.MessageCreate, async message => {
     
     // Handle guild messages
     if (!message.guild) return;
+    
+    // Skip messages in excluded channels
+    if (EXCLUDED_CHANNELS.includes(message.channel.id)) return;
     
     // Handle bot mentions
     if (message.mentions.has(client.user)) {
