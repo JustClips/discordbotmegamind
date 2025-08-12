@@ -18,7 +18,10 @@ const client = new Client({
         GatewayIntentBits.GuildPresences,
         GatewayIntentBits.GuildModeration,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMessageTyping
+        GatewayIntentBits.GuildMessageTyping,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.DirectMessageReactions,
+        GatewayIntentBits.DirectMessageTyping
     ] 
 });
 
@@ -335,48 +338,6 @@ async function logBulkModerationAction(action, moderator, reason, count) {
     }
 }
 
-// Advanced text normalization to prevent bypasses
-function normalizeText(text) {
-    // Convert to lowercase and normalize Unicode
-    let normalized = text.toLowerCase().normalize('NFD');
-    
-    // Remove diacritical marks
-    normalized = normalized.replace(/[\u0300-\u036f]/g, '');
-    
-    // Replace Unicode lookalikes with ASCII equivalents
-    const unicodeMap = {
-        'а': 'a', 'ｂ': 'b', 'ｃ': 'c', 'ｄ': 'd', 'ｅ': 'e', 'ｆ': 'f', 'ｇ': 'g', 'ｈ': 'h', 'ｉ': 'i', 'ｊ': 'j',
-        'ｋ': 'k', 'ｌ': 'l', 'ｍ': 'm', 'ｎ': 'n', 'ｏ': 'o', 'ｐ': 'p', 'ｑ': 'q', 'ｒ': 'r', 'ｓ': 's', 'ｔ': 't',
-        'ｕ': 'u', 'ｖ': 'v', 'ｗ': 'w', 'ｘ': 'x', 'ｙ': 'y', 'ｚ': 'z',
-        'А': 'A', 'Ｂ': 'B', 'Ｃ': 'C', 'Ｄ': 'D', 'Ｅ': 'E', 'Ｆ': 'F', 'Ｇ': 'G', 'Ｈ': 'H', 'Ｉ': 'I', 'Ｊ': 'J',
-        'К': 'K', 'Ｌ': 'L', 'Ｍ': 'M', 'Ｎ': 'N', 'Ｏ': 'O', 'Ｐ': 'P', 'Ｑ': 'Q', 'Ｒ': 'R', 'Ｓ': 'S', 'Ｔ': 'T',
-        'Ｕ': 'U', 'Ｖ': 'V', 'Ｗ': 'W', 'Ｘ': 'X', 'Ｙ': 'Y', 'Ｚ': 'Z',
-        '⓪': '0', '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9',
-        '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-        '！': '!', '＠': '@', '＃': '#', '＄': '$', '％': '%', '＾': '^', '＆': '&', '＊': '*', '（': '(', '）': ')',
-        '＿': '_', '＋': '+', '－': '-', '＝': '=', '｛': '{', '｝': '}', '｜': '|', '＼': '\\', '：': ':', '；': ';',
-        '＂': '"', '＇': "'", '＜': '<', '＞': '>', '，': ',', '．': '.', '？': '?', '／': '/', '～': '~', '｀': '`',
-        '【': '[', '】': ']', '〖': '[', '〗': ']', '『': '"', '』': '"', '「': '"', '」': '"'
-    };
-    
-    // Apply Unicode mapping
-    Object.keys(unicodeMap).forEach(key => {
-        const regex = new RegExp(key, 'g');
-        normalized = normalized.replace(regex, unicodeMap[key]);
-    });
-    
-    // Remove extra whitespace and special characters that might be used for obfuscation
-    normalized = normalized.replace(/\s+/g, ' ').trim();
-    
-    // Remove zero-width characters
-    normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
-    
-    // Remove repeated characters that might be used to bypass filters
-    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
-    
-    return normalized;
-}
-
 // Enhanced scam detection patterns
 const scamLinks = [
     'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
@@ -401,7 +362,7 @@ const nsfwWords = [
 
 // Check if message contains scam content
 function containsScamContent(content) {
-    const normalizedContent = normalizeText(content);
+    const normalizedContent = content.toLowerCase();
     
     // Check for scam links
     for (const link of scamLinks) {
@@ -418,7 +379,7 @@ function containsScamContent(content) {
 
 // Check if message contains NSFW content
 function containsNSFWContent(content) {
-    const normalizedContent = normalizeText(content);
+    const normalizedContent = content.toLowerCase();
     
     for (const word of nsfwWords) {
         if (normalizedContent.includes(word)) return true;
@@ -1300,7 +1261,7 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// Handle auto-moderation and AI conversations
+// Handle auto-moderation and bot mentions
 client.on(Events.MessageCreate, async message => {
     // Ignore bot messages (except in DMs for direct communication)
     if (message.author.bot && message.channel.type !== 'DM') return;
@@ -1313,6 +1274,37 @@ client.on(Events.MessageCreate, async message => {
     
     // Handle guild messages
     if (!message.guild) return;
+    
+    // Handle bot mentions
+    if (message.mentions.has(client.user)) {
+        // Remove bot mention from content
+        let cleanContent = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+        
+        // If only the mention was sent, respond with a greeting
+        if (!cleanContent) {
+            cleanContent = "Hello! How can I help you today?";
+        }
+        
+        // Add to conversation context
+        await addToConversationContext(message.channel.id, message.author.id, message.author.username, message.content);
+        
+        // Simple response without AI
+        const responses = [
+            "I'm here to help! What can I do for you?",
+            "Hello there! How can I assist you today?",
+            "Hi! I'm listening. What do you need help with?",
+            "Hey! I'm AutoModAI. How can I be of service?",
+            "Greetings! What can I help you with?"
+        ];
+        
+        const response = responses[Math.floor(Math.random() * responses.length)];
+        await message.reply(response);
+        
+        // Add bot response to context
+        await addToConversationContext(message.channel.id, client.user.id, client.user.username, response, true);
+        
+        return;
+    }
     
     // Skip messages from users with permissions for moderation
     if (!hasPermission(message.member)) {
