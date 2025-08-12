@@ -315,7 +315,7 @@ async function checkWithGemini(content) {
         const processedContent = normalizeText(content);
         
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{
                     parts: [{
@@ -797,13 +797,21 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.ClientReady, async () => {
     // Record for all guilds
     client.guilds.cache.forEach(async guild => {
-        await recordMemberCount(guild);
+        try {
+            await recordMemberCount(guild);
+        } catch (error) {
+            console.error(`Error recording member count for guild ${guild.id}:`, error);
+        }
     });
     
     // Set up interval to record every 6 hours
     setInterval(async () => {
         client.guilds.cache.forEach(async guild => {
-            await recordMemberCount(guild);
+            try {
+                await recordMemberCount(guild);
+            } catch (error) {
+                console.error(`Error recording member count for guild ${guild.id}:`, error);
+            }
         });
     }, 6 * 60 * 60 * 1000); // 6 hours
 });
@@ -2147,7 +2155,11 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
         // Debounce updates to avoid too many writes
         clearTimeout(client.presenceUpdateTimeout);
         client.presenceUpdateTimeout = setTimeout(async () => {
-            await recordMemberCount(newMember.guild);
+            try {
+                await recordMemberCount(newMember.guild);
+            } catch (error) {
+                console.error(`Error recording member count for guild ${newMember.guild.id}:`, error);
+            }
         }, 30000); // 30 second debounce
     }
 });
