@@ -330,7 +330,7 @@ Respond ONLY with the JSON object as specified.`;
 
             // Use OpenAI instead of Gemini with correct parameters for gpt-5-nano (removed temperature parameter)
             const response = await openai.chat.completions.create({
-                model: "gpt-5-nano-nano",
+                model: "gpt-5-nano",
                 messages: [
                     {
                         role: "user",
