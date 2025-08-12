@@ -199,7 +199,49 @@ async function logBulkModerationAction(action, moderator, reason, count) {
     }
 }
 
-// Auto-moderation patterns
+// Advanced text normalization to prevent bypasses
+function normalizeText(text) {
+    // Convert to lowercase and normalize Unicode
+    let normalized = text.toLowerCase().normalize('NFD');
+    
+    // Remove diacritical marks
+    normalized = normalized.replace(/[\u0300-\u036f]/g, '');
+    
+    // Replace Unicode lookalikes with ASCII equivalents
+    const unicodeMap = {
+        'а': 'a', 'ｂ': 'b', 'ｃ': 'c', 'ｄ': 'd', 'ｅ': 'e', 'ｆ': 'f', 'ｇ': 'g', 'ｈ': 'h', 'ｉ': 'i', 'ｊ': 'j',
+        'ｋ': 'k', 'ｌ': 'l', 'ｍ': 'm', 'ｎ': 'n', 'ｏ': 'o', 'ｐ': 'p', 'ｑ': 'q', 'ｒ': 'r', 'ｓ': 's', 'ｔ': 't',
+        'ｕ': 'u', 'ｖ': 'v', 'ｗ': 'w', 'ｘ': 'x', 'ｙ': 'y', 'ｚ': 'z',
+        'Ａ': 'A', 'Ｂ': 'B', 'Ｃ': 'C', 'Ｄ': 'D', 'Ｅ': 'E', 'Ｆ': 'F', 'Ｇ': 'G', 'Ｈ': 'H', 'Ｉ': 'I', 'Ｊ': 'J',
+        'Ｋ': 'K', 'Ｌ': 'L', 'Ｍ': 'M', 'Ｎ': 'N', 'Ｏ': 'O', 'Ｐ': 'P', 'Ｑ': 'Q', 'Ｒ': 'R', 'Ｓ': 'S', 'Ｔ': 'T',
+        'Ｕ': 'U', 'Ｖ': 'V', 'Ｗ': 'W', 'Ｘ': 'X', 'Ｙ': 'Y', 'Ｚ': 'Z',
+        '⓪': '0', '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9',
+        '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+        '！': '!', '＠': '@', '＃': '#', '＄': '$', '％': '%', '＾': '^', '＆': '&', '＊': '*', '（': '(', '）': ')',
+        '＿': '_', '＋': '+', '－': '-', '＝': '=', '｛': '{', '｝': '}', '｜': '|', '＼': '\\', '：': ':', '；': ';',
+        '＂': '"', '＇': "'", '＜': '<', '＞': '>', '，': ',', '．': '.', '？': '?', '／': '/', '～': '~', '｀': '`',
+        '【': '[', '】': ']', '〖': '[', '〗': ']', '『': '"', '』': '"', '「': '"', '」': '"'
+    };
+    
+    // Apply Unicode mapping
+    Object.keys(unicodeMap).forEach(key => {
+        const regex = new RegExp(key, 'g');
+        normalized = normalized.replace(regex, unicodeMap[key]);
+    });
+    
+    // Remove extra whitespace and special characters that might be used for obfuscation
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+    
+    // Remove zero-width characters
+    normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
+    
+    // Remove repeated characters that might be used to bypass filters
+    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
+    
+    return normalized;
+}
+
+// Enhanced scam detection patterns
 const scamLinks = [
     'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
     'free-nitro', 'nitro-free', 'free discord nitro', 'claim nitro',
@@ -213,23 +255,26 @@ const scamKeywords = [
     'cash app hack', 'get free money', 'make money fast', 'easy money'
 ];
 
+// Enhanced NSFW words with variations
 const nsfwWords = [
     'nigga', 'nigger', 'faggot', 'kys', 'kill yourself', 'suicide',
-    'porn', 'xxx', 'sex', 'rape', 'pedo', 'pedophile'
+    'porn', 'xxx', 'sex', 'rape', 'pedo', 'pedophile', 'cum', 'dick', 'cock',
+    'pussy', 'asshole', 'bitch', 'whore', 'slut', 'cunt', 'retard', 'idiot',
+    'stupid', 'dumb', 'moron', 'wanker', 'masturbate', 'orgy', 'gangbang'
 ];
 
 // Check if message contains scam content
 function containsScamContent(content) {
-    const lowerContent = content.toLowerCase();
+    const normalizedContent = normalizeText(content);
     
     // Check for scam links
     for (const link of scamLinks) {
-        if (lowerContent.includes(link)) return true;
+        if (normalizedContent.includes(link)) return true;
     }
     
     // Check for scam keywords
     for (const keyword of scamKeywords) {
-        if (lowerContent.includes(keyword)) return true;
+        if (normalizedContent.includes(keyword)) return true;
     }
     
     return false;
@@ -237,44 +282,62 @@ function containsScamContent(content) {
 
 // Check if message contains NSFW content
 function containsNSFWContent(content) {
-    const lowerContent = content.toLowerCase();
+    const normalizedContent = normalizeText(content);
     
     for (const word of nsfwWords) {
-        if (lowerContent.includes(word)) return true;
+        if (normalizedContent.includes(word)) return true;
     }
     
     return false;
 }
 
-// Check with Gemini AI (Only AI checker now)
+// Check with Gemini AI (Enhanced for bypass detection)
 async function checkWithGemini(content) {
     if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
     
     try {
+        // Pre-process content to detect bypass attempts
+        const processedContent = normalizeText(content);
+        
         const response = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{
                     parts: [{
-                        text: `You are a Discord moderation AI. Analyze this message for violations in ANY language. 
-Check for: 
-1. Discord ToS violations (scams, phishing, spam, harassment)
-2. NSFW content (hate speech, explicit content, threats)
-3. Bypass attempts (obfuscation, alternate spellings, hidden characters)
-4. Toxic behavior (bullying, discrimination)
+                        text: `You are an advanced Discord moderation AI. Analyze this message for violations in ANY language including bypass attempts.
 
-Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or "OK" if it's fine.
-Message to analyze: "${content}"`
+Key areas to check:
+1. Discord ToS violations (scams, phishing, spam, harassment)
+2. NSFW content (hate speech, explicit content, threats, slurs)
+3. Bypass attempts (Unicode obfuscation, character substitution, hidden characters)
+4. Toxic behavior (bullying, discrimination, threats)
+5. Any form of harassment or harmful content
+
+Message to analyze: "${processedContent}"
+
+Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or "OK" if it's fine. Be very strict and catch any potential violations.`
                     }]
                 }],
                 generationConfig: {
                     temperature: 0.0,
-                    maxOutputTokens: 100
+                    maxOutputTokens: 150
                 },
                 safetySettings: [
                     {
                         category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        threshold: "BLOCK_ONLY_HIGH"
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_HARASSMENT",
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_HATE_SPEECH",
+                        threshold: "BLOCK_NONE"
+                    },
+                    {
+                        category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        threshold: "BLOCK_NONE"
                     }
                 ]
             },
