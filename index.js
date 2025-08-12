@@ -1,11 +1,11 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const QuickChart = require('quickchart-js');
 const fs = require('fs').promises;
 
-// Configuration
-const MOD_ROLE_ID = '1398413061169352949';
-const OWNER_IDS = ['YOUR_DISCORD_USER_ID']; // Add your Discord user ID here
+// Configuration - Using environment variable for OWNER_IDS
+const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
+const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
 
 // Create a new client instance
 const client = new Client({ 
@@ -14,7 +14,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildPresences, // Added for online member tracking
+        GatewayIntentBits.GuildPresences,
         GatewayIntentBits.GuildModeration
     ] 
 });
@@ -213,31 +213,6 @@ const commands = [
                 .setRequired(true)
                 .setMinValue(1)
                 .setMaxValue(100)),
-
-    // Role management commands
-    new SlashCommandBuilder()
-        .setName('addrole')
-        .setDescription('Add a role to a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to add role to')
-                .setRequired(true))
-        .addRoleOption(option =>
-            option.setName('role')
-                .setDescription('The role to add')
-                .setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName('removerole')
-        .setDescription('Remove a role from a user')
-        .addUserOption(option =>
-            option.setName('user')
-                .setDescription('The user to remove role from')
-                .setRequired(true))
-        .addRoleOption(option =>
-            option.setName('role')
-                .setDescription('The role to remove')
-                .setRequired(true)),
 
     // Nickname command
     new SlashCommandBuilder()
@@ -617,7 +592,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             try {
                 // Update channel permissions to deny SEND_MESSAGES for @everyone
-                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
+                await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
                     SendMessages: false
                 });
 
@@ -643,7 +618,7 @@ client.on(Events.InteractionCreate, async interaction => {
                             temporaryLocks.delete(channel.id);
                             
                             // Unlock the channel
-                            await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
+                            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
                                 SendMessages: null // Remove the overwrite
                             });
                             
@@ -697,7 +672,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const tempLock = temporaryLocks.get(channel.id);
                 
                 // Update channel permissions to allow SEND_MESSAGES for @everyone
-                await channel.permissionOverwrites.create(interaction.guild.roles.everyone, {
+                await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
                     SendMessages: null // Remove the overwrite
                 });
 
@@ -852,62 +827,6 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
 
-        // Add role command
-        else if (commandName === 'addrole') {
-            const user = options.getUser('user');
-            const role = options.getRole('role');
-            
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                await targetMember.roles.add(role);
-                await interaction.reply({
-                    content: `✅ Added role <@&${role.id}> to <@${user.id}>`
-                });
-            } catch (error) {
-                console.error('Add role error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to add role. I might not have permission or the role is higher than my role.',
-                    ephemeral: true
-                });
-            }
-        }
-
-        // Remove role command
-        else if (commandName === 'removerole') {
-            const user = options.getUser('user');
-            const role = options.getRole('role');
-            
-            const targetMember = await interaction.guild.members.fetch(user.id);
-            
-            if (!targetMember) {
-                return await interaction.reply({
-                    content: '❌ User not found!',
-                    ephemeral: true
-                });
-            }
-
-            try {
-                await targetMember.roles.remove(role);
-                await interaction.reply({
-                    content: `✅ Removed role <@&${role.id}> from <@${user.id}>`
-                });
-            } catch (error) {
-                console.error('Remove role error:', error);
-                await interaction.reply({
-                    content: '❌ Failed to remove role. I might not have permission or the role is higher than my role.',
-                    ephemeral: true
-                });
-            }
-        }
-
         // Nickname command
         else if (commandName === 'nick') {
             const user = options.getUser('user');
@@ -982,7 +901,7 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
 
-        // Member count command
+        // Member count command - now as embed
         else if (commandName === 'membercount') {
             // Get current online members properly
             const onlineMembers = interaction.guild.members.cache.filter(member => {
@@ -993,19 +912,20 @@ client.on(Events.InteractionCreate, async interaction => {
             }).size;
             
             const totalMembers = interaction.guild.memberCount;
-            const botMembers = interaction.guild.members.cache.filter(member => member.user.bot).size;
-            const humanMembers = totalMembers - botMembers;
 
-            await interaction.reply({
-                content: `📊 **Server Member Count**\n\n` +
-                         `👥 Total Members: ${totalMembers}\n` +
-                         `🧑 Humans: ${humanMembers}\n` +
-                         `🤖 Bots: ${botMembers}\n` +
-                         `🟢 Online: ${onlineMembers}`
-            });
+            const embed = new EmbedBuilder()
+                .setTitle('📊 Server Member Count')
+                .setColor(0x5865F2)
+                .addFields(
+                    { name: 'Total Members', value: totalMembers.toString(), inline: true },
+                    { name: 'Online Members', value: onlineMembers.toString(), inline: true }
+                )
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [embed] });
         }
 
-        // Member analytics command
+        // Member analytics command - high quality chart
         else if (commandName === 'memberanalytics') {
             await interaction.deferReply();
 
@@ -1043,7 +963,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 const humanMembersData = chartData.map(point => point.humanMembers);
                 const onlineMembersData = chartData.map(point => point.onlineMembers);
 
-                // Create line chart
+                // Create high quality line chart
                 const chart = new QuickChart();
                 chart.setConfig({
                     type: 'line',
@@ -1057,7 +977,9 @@ client.on(Events.InteractionCreate, async interaction => {
                                 backgroundColor: 'rgba(88, 101, 242, 0.1)',
                                 fill: false,
                                 tension: 0.4,
-                                pointRadius: 3
+                                pointRadius: 4,
+                                pointBackgroundColor: '#5865F2',
+                                borderWidth: 3
                             },
                             {
                                 label: 'Humans',
@@ -1066,7 +988,9 @@ client.on(Events.InteractionCreate, async interaction => {
                                 backgroundColor: 'rgba(59, 165, 93, 0.1)',
                                 fill: false,
                                 tension: 0.4,
-                                pointRadius: 2
+                                pointRadius: 3,
+                                pointBackgroundColor: '#3BA55D',
+                                borderWidth: 2
                             },
                             {
                                 label: 'Online Members',
@@ -1075,21 +999,33 @@ client.on(Events.InteractionCreate, async interaction => {
                                 backgroundColor: 'rgba(237, 66, 69, 0.1)',
                                 fill: false,
                                 tension: 0.4,
-                                pointRadius: 2
+                                pointRadius: 3,
+                                pointBackgroundColor: '#ED4245',
+                                borderWidth: 2
                             }
                         ]
                     },
                     options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
                         plugins: {
                             title: {
                                 display: true,
                                 text: `${interaction.guild.name} - Member Growth`,
                                 font: {
-                                    size: 14
-                                }
+                                    size: 16,
+                                    weight: 'bold'
+                                },
+                                color: '#ffffff'
                             },
                             legend: {
-                                position: 'top'
+                                position: 'top',
+                                labels: {
+                                    color: '#ffffff',
+                                    font: {
+                                        size: 12
+                                    }
+                                }
                             }
                         },
                         scales: {
@@ -1097,16 +1033,27 @@ client.on(Events.InteractionCreate, async interaction => {
                                 beginAtZero: true,
                                 grid: {
                                     color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#ffffff'
                                 }
                             },
                             x: {
                                 grid: {
                                     color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: '#ffffff'
                                 }
                             }
                         }
                     }
                 });
+                
+                // Set high quality chart
+                chart.setWidth(800);
+                chart.setHeight(400);
+                chart.setBackgroundColor('#2C2F33');
 
                 const chartUrl = await chart.getShortUrl();
                 const attachment = new AttachmentBuilder(chartUrl, { name: 'member-analytics.png' });
