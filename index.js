@@ -40,6 +40,7 @@ function hasPermission(member) {
 // Data file path
 const DATA_FILE = './memberData.json';
 const STRIKES_FILE = './strikes.json';
+const CONVERSATION_FILE = './conversationContext.json';
 
 // Load member data from file
 async function loadMemberData(guildId) {
@@ -86,6 +87,66 @@ async function saveStrikes(strikes) {
         await fs.writeFile(STRIKES_FILE, JSON.stringify(strikes, null, 2));
     } catch (error) {
         console.error('Error saving strikes:', error);
+    }
+}
+
+// Load conversation context
+async function loadConversationContext() {
+    try {
+        const data = await fs.readFile(CONVERSATION_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        return {};
+    }
+}
+
+// Save conversation context
+async function saveConversationContext(context) {
+    try {
+        await fs.writeFile(CONVERSATION_FILE, JSON.stringify(context, null, 2));
+    } catch (error) {
+        console.error('Error saving conversation context:', error);
+    }
+}
+
+// Add message to conversation context
+async function addToConversationContext(channelId, userId, message, isBot = false) {
+    try {
+        const context = await loadConversationContext();
+        
+        if (!context[channelId]) {
+            context[channelId] = [];
+        }
+        
+        // Add new message
+        context[channelId].push({
+            userId: userId,
+            username: isBot ? 'AutoModAI' : userId, // Simplified for storage
+            content: message,
+            timestamp: new Date().toISOString(),
+            isBot: isBot
+        });
+        
+        // Keep only last 20 messages per channel
+        if (context[channelId].length > 20) {
+            context[channelId] = context[channelId].slice(-20);
+        }
+        
+        await saveConversationContext(context);
+        return context[channelId];
+    } catch (error) {
+        console.error('Error adding to conversation context:', error);
+        return [];
+    }
+}
+
+// Get conversation context for a channel
+async function getConversationContext(channelId) {
+    try {
+        const context = await loadConversationContext();
+        return context[channelId] || [];
+    } catch (error) {
+        return [];
     }
 }
 
@@ -212,8 +273,8 @@ function normalizeText(text) {
         'а': 'a', 'ｂ': 'b', 'ｃ': 'c', 'ｄ': 'd', 'ｅ': 'e', 'ｆ': 'f', 'ｇ': 'g', 'ｈ': 'h', 'ｉ': 'i', 'ｊ': 'j',
         'ｋ': 'k', 'ｌ': 'l', 'ｍ': 'm', 'ｎ': 'n', 'ｏ': 'o', 'ｐ': 'p', 'ｑ': 'q', 'ｒ': 'r', 'ｓ': 's', 'ｔ': 't',
         'ｕ': 'u', 'ｖ': 'v', 'ｗ': 'w', 'ｘ': 'x', 'ｙ': 'y', 'ｚ': 'z',
-        'Ａ': 'A', 'Ｂ': 'B', 'Ｃ': 'C', 'Ｄ': 'D', 'Ｅ': 'E', 'Ｆ': 'F', 'Ｇ': 'G', 'Ｈ': 'H', 'Ｉ': 'I', 'Ｊ': 'J',
-        'Ｋ': 'K', 'Ｌ': 'L', 'Ｍ': 'M', 'Ｎ': 'N', 'Ｏ': 'O', 'Ｐ': 'P', 'Ｑ': 'Q', 'Ｒ': 'R', 'Ｓ': 'S', 'Ｔ': 'T',
+        'А': 'A', 'Ｂ': 'B', 'Ｃ': 'C', 'Ｄ': 'D', 'Ｅ': 'E', 'Ｆ': 'F', 'Ｇ': 'G', 'Ｈ': 'H', 'Ｉ': 'I', 'Ｊ': 'J',
+        'К': 'K', 'Ｌ': 'L', 'Ｍ': 'M', 'Ｎ': 'N', 'Ｏ': 'O', 'Ｐ': 'P', 'Ｑ': 'Q', 'Ｒ': 'R', 'Ｓ': 'S', 'Ｔ': 'T',
         'Ｕ': 'U', 'Ｖ': 'V', 'Ｗ': 'W', 'Ｘ': 'X', 'Ｙ': 'Y', 'Ｚ': 'Z',
         '⓪': '0', '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9',
         '０': '0', '１': '1', '２': '2', '３': '3', '４': '4', '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
@@ -291,11 +352,19 @@ function containsNSFWContent(content) {
     return false;
 }
 
-// Check with Gemini AI (Enhanced for bypass detection)
-async function checkWithGemini(content) {
+// Enhanced AI with conversation context
+async function checkWithGemini(content, channelId, userId) {
     if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
     
     try {
+        // Get conversation context
+        const conversationContext = await getConversationContext(channelId);
+        
+        // Format context for AI
+        const formattedContext = conversationContext.map(msg => 
+            `${msg.isBot ? 'AutoModAI' : msg.userId}: ${msg.content}`
+        ).join('\n');
+        
         // Pre-process content to detect bypass attempts
         const processedContent = normalizeText(content);
         
@@ -304,23 +373,45 @@ async function checkWithGemini(content) {
             {
                 contents: [{
                     parts: [{
-                        text: `You are an advanced Discord moderation AI. Analyze this message for violations in ANY language including bypass attempts.
+                        text: `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
 
-Key areas to check:
-1. Discord ToS violations (scams, phishing, spam, harassment)
-2. NSFW content (hate speech, explicit content, threats, slurs)
-3. Bypass attempts (Unicode obfuscation, character substitution, hidden characters)
-4. Toxic behavior (bullying, discrimination, threats)
-5. Any form of harassment or harmful content
+OUTPUT RULES (MANDATORY)
+- Respond with exactly one JSON object and nothing else (no explanation outside JSON).
+- JSON schema:
+  {
+    "action": "allow" | "warn" | "delete" | "timeout" | "ban" | "review",
+    "category": "spam" | "scam" | "harassment" | "hate_speech" | "nsfw" | "dox" | "self_harm" | "illegal" | "other",
+    "severity": "low" | "medium" | "high",
+    "confidence": 0.00-1.00,
+    "explanation": "short human explanation (<=200 chars)",
+    "evidence": ["normalized fragments or matched tokens", ...],
+    "suggested_duration_minutes": null | integer
+  }
+
+DECISION GUIDELINES
+- Use full context if provided. If intent is ambiguous, return "review" (not "ban").
+- Do NOT base decisions only on keywords — assess intent, target, role relationships, and surrounding conversation.
+- If obfuscation detected, include the normalized text snippet(s) in "evidence".
+- If the content contains links or invites flagged as scams, set category "scam" and provide the link fragment in "evidence".
+- For harassment/hate/sex content set the correct category and a severity based on explicitness and target (targeted slur=high).
+- Confidence should reflect certainty: low (<0.6) when ambiguous, high (>0.85) when clear attack/scam.
+- Suggested durations: if action is "timeout" provide an integer; otherwise null.
+
+FORMAT & STYLE
+- Keep "explanation" short & human-like (e.g., "Targeted slur against an individual — removed to protect members.").
+- Provide only the JSON object, nothing else.
 
 Message to analyze: "${processedContent}"
 
-Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or "OK" if it's fine. Be very strict and catch any potential violations.`
+Context (recent messages in channel):
+${formattedContext || 'No recent context'}
+
+Respond ONLY with the JSON object as specified.`
                     }]
                 }],
                 generationConfig: {
                     temperature: 0.0,
-                    maxOutputTokens: 150
+                    maxOutputTokens: 300
                 },
                 safetySettings: [
                     {
@@ -348,13 +439,31 @@ Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or
             }
         );
         
-        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'OK';
+        const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
         
-        if (result.startsWith('VIOLATION:')) {
-            return {
-                isViolation: true,
-                reason: result.replace('VIOLATION:', '').trim()
-            };
+        try {
+            // Try to parse the JSON response
+            const aiResponse = JSON.parse(result);
+            
+            // Validate required fields
+            if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
+                // Only act on violations with confidence > 0.7
+                if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
+                    return {
+                        isViolation: true,
+                        reason: aiResponse.explanation,
+                        action: aiResponse.action,
+                        category: aiResponse.category,
+                        severity: aiResponse.severity,
+                        confidence: aiResponse.confidence,
+                        evidence: aiResponse.evidence,
+                        duration: aiResponse.suggested_duration_minutes
+                    };
+                }
+            }
+        } catch (parseError) {
+            console.error('AI response parsing error:', parseError);
+            console.error('Raw AI response:', result);
         }
         
         return { isViolation: false, reason: '' };
@@ -364,12 +473,6 @@ Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or
     }
 }
 
-// Updated multi-AI checker (only Gemini now):
-async function checkWithAI(content) {
-    // Only use Gemini
-    return await checkWithGemini(content);
-}
-
 // Auto-moderation function with strike system
 async function autoModerate(message) {
     // Skip bot messages and users with permissions
@@ -377,32 +480,53 @@ async function autoModerate(message) {
     
     const content = message.content;
     
+    // Add message to conversation context
+    await addToConversationContext(message.channel.id, message.author.id, content);
+    
     // Check for spam (too many mentions)
     if (message.mentions.users.size > 5 || message.mentions.roles.size > 3) {
-        return await handleViolation(message, 'Mention spam detected', 10);
+        return await handleViolation(message, 'Mention spam detected', 10, 'spam');
     }
     
     // Check for link spam
     const links = content.match(/https?:\/\/[^\s]+/g) || [];
     if (links.length > 3) {
-        return await handleViolation(message, 'Link spam detected', 15);
+        return await handleViolation(message, 'Link spam detected', 15, 'spam');
     }
     
     // Check for scam content
     if (containsScamContent(content)) {
-        return await handleViolation(message, 'Scam content detected', 30);
+        return await handleViolation(message, 'Scam content detected', 30, 'scam');
     }
     
     // Check for NSFW content
     if (containsNSFWContent(content)) {
-        return await handleViolation(message, 'Inappropriate content detected', 20);
+        return await handleViolation(message, 'Inappropriate content detected', 20, 'nsfw');
     }
     
     // Check with Gemini AI if API key is available
     if (GEMINI_API_KEY) {
-        const aiResult = await checkWithAI(content);
+        const aiResult = await checkWithGemini(content, message.channel.id, message.author.id);
         if (aiResult.isViolation) {
-            return await handleViolation(message, `AI detected violation: ${aiResult.reason}`, 25);
+            const reason = `AI detected violation: ${aiResult.reason}`;
+            let duration = 15; // Default duration
+            
+            // Adjust duration based on severity
+            if (aiResult.severity === 'high') duration = 30;
+            if (aiResult.severity === 'medium') duration = 20;
+            
+            // Use AI suggested duration if provided
+            if (aiResult.duration) duration = aiResult.duration;
+            
+            // Add AI response to conversation context
+            await addToConversationContext(message.channel.id, 'AutoModAI', `Action: ${aiResult.action}, Category: ${aiResult.category}, Reason: ${aiResult.reason}`, true);
+            
+            return await handleViolation(
+                message, 
+                reason, 
+                duration, 
+                aiResult.category
+            );
         }
     }
     
@@ -410,7 +534,7 @@ async function autoModerate(message) {
 }
 
 // Handle violations with strike system
-async function handleViolation(message, reason, muteDuration) {
+async function handleViolation(message, reason, muteDuration, category) {
     try {
         const strikes = await loadStrikes();
         const userId = message.author.id;
@@ -432,7 +556,7 @@ async function handleViolation(message, reason, muteDuration) {
                 await message.author.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ Warning')
-                        .setDescription(`You've received a warning in **${message.guild.name}**\n**Reason:** ${reason}\n\nPlease follow the server rules to avoid further action.`)
+                        .setDescription(`You've received a warning in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nPlease follow the server rules to avoid further action.`)
                         .setColor(0xFEE75C)
                         .setTimestamp()
                     ]
@@ -443,7 +567,7 @@ async function handleViolation(message, reason, muteDuration) {
             
             // Delete message
             await message.delete().catch(() => {});
-            await logDeletedMessage(message, `1st Strike - ${reason}`);
+            await logDeletedMessage(message, `1st Strike [${category}] - ${reason}`);
             
             // Show temporary warning message
             const warningMsg = await message.channel.send({
@@ -465,7 +589,7 @@ async function handleViolation(message, reason, muteDuration) {
                 await message.author.send({
                     embeds: [new EmbedBuilder()
                         .setTitle('⚠️ Final Warning')
-                        .setDescription(`This is your **final warning** in **${message.guild.name}**\n**Reason:** ${reason}\n\nFurther violations will result in a mute.`)
+                        .setDescription(`This is your **final warning** in **${message.guild.name}**\n**Reason:** ${reason}\n**Category:** ${category.toUpperCase()}\n\nFurther violations will result in a mute.`)
                         .setColor(0xED4245)
                         .setTimestamp()
                     ]
@@ -476,7 +600,7 @@ async function handleViolation(message, reason, muteDuration) {
             
             // Delete message
             await message.delete().catch(() => {});
-            await logDeletedMessage(message, `2nd Strike - ${reason}`);
+            await logDeletedMessage(message, `2nd Strike [${category}] - ${reason}`);
             
             // Show temporary warning message
             const warningMsg = await message.channel.send({
@@ -494,7 +618,7 @@ async function handleViolation(message, reason, muteDuration) {
         // Third strike and beyond - mute user
         await muteUser(message.member, muteDuration, reason);
         await message.delete().catch(() => {});
-        await logDeletedMessage(message, `Strike ${strikes[userKey]} - Muted for ${muteDuration} minutes - ${reason}`);
+        await logDeletedMessage(message, `Strike ${strikes[userKey]} [${category}] - Muted for ${muteDuration} minutes - ${reason}`);
         await logModerationAction('Mute (Auto)', message.author, client.user, reason, muteDuration);
         
         // Show temporary mute message
@@ -695,7 +819,24 @@ const commands = [
     // Member analytics command
     new SlashCommandBuilder()
         .setName('memberanalytics')
-        .setDescription('Show detailed server member analytics and growth graph')
+        .setDescription('Show detailed server member analytics and growth graph'),
+
+    // Give role command
+    new SlashCommandBuilder()
+        .setName('giverole')
+        .setDescription('Give a role to a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('The user to give the role to')
+                .setRequired(true))
+        .addRoleOption(option =>
+            option.setName('role')
+                .setDescription('The role to give')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for giving the role')
+                .setRequired(false))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -1128,6 +1269,59 @@ client.on(Events.MessageCreate, async message => {
             } catch (error) {
                 console.error('Slowmode error:', error);
                 message.reply('❌ Failed to set slowmode.');
+            }
+        }
+        
+        else if (command === 'giverole') {
+            const user = message.mentions.users.first();
+            if (!user) return message.reply('❌ Please mention a user to give the role to!');
+            
+            const member = message.guild.members.cache.get(user.id);
+            if (!member) return message.reply('❌ User not found!');
+            
+            const role = message.mentions.roles.first() || message.guild.roles.cache.get(args[1]);
+            if (!role) return message.reply('❌ Please mention a valid role!');
+            
+            const reason = args.slice(2).join(' ') || 'No reason provided';
+            
+            // Check if bot can manage roles
+            if (!message.guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                return message.reply('❌ I don\'t have permission to manage roles!');
+            }
+            
+            // Check if role is higher than bot's highest role
+            if (role.position >= message.guild.members.me.roles.highest.position) {
+                return message.reply('❌ I cannot assign this role because it is higher than or equal to my highest role!');
+            }
+            
+            try {
+                await member.roles.add(role, reason);
+                const reply = await message.reply(`✅ Role <@&${role.id}> has been given to <@${user.id}>.\n**Reason:** ${reason}`);
+                
+                // Log action
+                await logModerationAction('Role Added', user, message.author, `Added role: ${role.name}`, null);
+                
+                // Send DM to user
+                try {
+                    await user.send({
+                        embeds: [new EmbedBuilder()
+                            .setTitle('🎉 Role Assigned')
+                            .setDescription(`You have been given the role **${role.name}** in **${message.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${message.author.id}>`)
+                            .setColor(0x57F287)
+                            .setTimestamp()
+                        ]
+                    });
+                } catch (error) {
+                    console.log('Could not send DM to user');
+                }
+                
+                // Delete reply after 1 minute
+                setTimeout(() => {
+                    reply.delete().catch(() => {});
+                }, 60000);
+            } catch (error) {
+                console.error('Give role error:', error);
+                message.reply('❌ Failed to give role.');
             }
         }
         
@@ -2057,6 +2251,68 @@ client.on(Events.InteractionCreate, async interaction => {
                 console.error('Analytics error:', error);
                 await interaction.editReply({
                     content: '❌ Failed to generate member analytics.'
+                });
+            }
+        }
+
+        // Give role command
+        else if (commandName === 'giverole') {
+            const user = options.getUser('user');
+            const role = options.getRole('role');
+            const reason = options.getString('reason') || 'No reason provided';
+            
+            const targetMember = await interaction.guild.members.fetch(user.id);
+            
+            if (!targetMember) {
+                return await interaction.reply({
+                    content: '❌ User not found!',
+                    ephemeral: true
+                });
+            }
+
+            // Check if bot can manage roles
+            if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                return await interaction.reply({
+                    content: '❌ I don\'t have permission to manage roles!',
+                    ephemeral: true
+                });
+            }
+            
+            // Check if role is higher than bot's highest role
+            if (role.position >= interaction.guild.members.me.roles.highest.position) {
+                return await interaction.reply({
+                    content: '❌ I cannot assign this role because it is higher than or equal to my highest role!',
+                    ephemeral: true
+                });
+            }
+            
+            try {
+                await targetMember.roles.add(role, reason);
+                await interaction.reply({
+                    content: `✅ Role <@&${role.id}> has been given to <@${user.id}>.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`
+                });
+                
+                // Log action
+                await logModerationAction('Role Added', user, member.user, `Added role: ${role.name}`, null);
+                
+                // Send DM to user
+                try {
+                    await user.send({
+                        embeds: [new EmbedBuilder()
+                            .setTitle('🎉 Role Assigned')
+                            .setDescription(`You have been given the role **${role.name}** in **${interaction.guild.name}**.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`)
+                            .setColor(0x57F287)
+                            .setTimestamp()
+                        ]
+                    });
+                } catch (error) {
+                    console.log('Could not send DM to user');
+                }
+            } catch (error) {
+                console.error('Give role error:', error);
+                await interaction.reply({
+                    content: '❌ Failed to give role.',
+                    ephemeral: true
                 });
             }
         }
