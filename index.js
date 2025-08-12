@@ -220,17 +220,12 @@ function normalizeText(text) {
         '！': '!', '＠': '@', '＃': '#', '＄': '$', '％': '%', '＾': '^', '＆': '&', '＊': '*', '（': '(', '）': ')',
         '＿': '_', '＋': '+', '－': '-', '＝': '=', '｛': '{', '｝': '}', '｜': '|', '＼': '\\', '：': ':', '；': ';',
         '＂': '"', '＇': "'", '＜': '<', '＞': '>', '，': ',', '．': '.', '？': '?', '／': '/', '～': '~', '｀': '`',
-        '【': '[', '】': ']', '〖': '[', '〗': ']', '『': '"', '』': '"', '「': '"', '」': '"',
-        '¡': 'i', '¢': 'c', '£': 'l', '¤': 'o', '¥': 'y', '¦': 'i', '§': 's', '¨': '"', '©': 'c', 'ª': 'a',
-        '«': '"', '¬': '-', '®': 'r', '¯': '-', '°': 'o', '±': '+', '²': '2', '³': '3', '´': "'", 'µ': 'u',
-        '¶': 'p', '·': '.', '¸': ',', '¹': '1', 'º': 'o', '»': '"', '¼': '1/4', '½': '1/2', '¾': '3/4', '¿': '?'
+        '【': '[', '】': ']', '〖': '[', '〗': ']', '『': '"', '』': '"', '「': '"', '」': '"'
     };
     
     // Apply Unicode mapping
     Object.keys(unicodeMap).forEach(key => {
-        // Properly escape special regex characters
-        const escapedKey = key.replace(/[-\/\\^$*+?.()|[```{}]/g, '\\$&');
-        const regex = new RegExp(escapedKey, 'g');
+        const regex = new RegExp(key, 'g');
         normalized = normalized.replace(regex, unicodeMap[key]);
     });
     
@@ -241,11 +236,7 @@ function normalizeText(text) {
     normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, '');
     
     // Remove repeated characters that might be used to bypass filters
-    normalized = normalized.replace(/(.)\1{3,}/g, '$1$1$1');
-    
-    // Remove excessive punctuation
-    normalized = normalized.replace(/([!@#$%^&*()_+\-=```math
-```{};':"\\|,.<>\/?])\1{2,}/g, '$1$1');
+    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
     
     return normalized;
 }
@@ -255,18 +246,13 @@ const scamLinks = [
     'discord.gift', 'discordapp.com/gifts', 'discord.com/gifts', 'bit.ly', 'tinyurl.com',
     'free-nitro', 'nitro-free', 'free discord nitro', 'claim nitro',
     'steamcomminuty', 'steamcommunlty', 'robuxfree',
-    'paypal', 'cashapp', 'venmo', 'zelle', 'westernunion', 'moneygram',
-    'grabify', 'iplogger', '2no.co', 'yip.su', 'youramonkey.com',
-    'bluemediafiles.com', 'shorturl.at', 'tiny.cc'
+    'paypal', 'cashapp', 'venmo', 'zelle', 'westernunion', 'moneygram'
 ];
 
 const scamKeywords = [
-    'free nitro', 'nitro for free', 'claim nitro', 'nitro generator',
+    'free nitro', 'nitro for free', 'claim nitro',
     'steam wallet', 'free robux', 'robux generator', 'paypal money',
-    'cash app hack', 'get free money', 'make money fast', 'easy money',
-    'click for reward', 'you won', 'congratulations you won',
-    'verify account', 'suspicious activity', 'limited time offer',
-    'gift card', 'redeem code', 'special offer'
+    'cash app hack', 'get free money', 'make money fast', 'easy money'
 ];
 
 // Enhanced NSFW words with variations
@@ -274,8 +260,7 @@ const nsfwWords = [
     'nigga', 'nigger', 'faggot', 'kys', 'kill yourself', 'suicide',
     'porn', 'xxx', 'sex', 'rape', 'pedo', 'pedophile', 'cum', 'dick', 'cock',
     'pussy', 'asshole', 'bitch', 'whore', 'slut', 'cunt', 'retard', 'idiot',
-    'stupid', 'dumb', 'moron', 'wanker', 'masturbate', 'orgy', 'gangbang',
-    'n1gga', 'n1gger', 'f4gg0t', 'k.y.s', 'k!ll your$elf', 'p3d0', 'p3dophile'
+    'stupid', 'dumb', 'moron', 'wanker', 'masturbate', 'orgy', 'gangbang'
 ];
 
 // Check if message contains scam content
@@ -306,7 +291,7 @@ function containsNSFWContent(content) {
     return false;
 }
 
-// Enhanced AI moderation with proper Discord context
+// Check with Gemini AI (Enhanced for bypass detection)
 async function checkWithGemini(content) {
     if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
     
@@ -315,70 +300,22 @@ async function checkWithGemini(content) {
         const processedContent = normalizeText(content);
         
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{
                     parts: [{
-                        text: `You are Discord AutoMod AI - an advanced content moderation system for Discord servers. Your job is to analyze text messages for violations and respond with strict enforcement.
+                        text: `You are an advanced Discord moderation AI. Analyze this message for violations in ANY language including bypass attempts.
 
-CONTEXT:
-- This is a Discord text chat server with multiple users
-- Messages are conversations between community members
-- You must enforce Discord Terms of Service strictly
-- Bypass attempts are common and must be detected
+Key areas to check:
+1. Discord ToS violations (scams, phishing, spam, harassment)
+2. NSFW content (hate speech, explicit content, threats, slurs)
+3. Bypass attempts (Unicode obfuscation, character substitution, hidden characters)
+4. Toxic behavior (bullying, discrimination, threats)
+5. Any form of harassment or harmful content
 
-ANALYSIS FRAMEWORK:
-1. First, identify if this is clearly normal conversation
-2. Then check for any suspicious patterns or red flags
-3. Finally, determine if it violates any rules
+Message to analyze: "${processedContent}"
 
-VIOLATION CATEGORIES (Flag ANY of these):
-1. Scams/Fraud:
-   - Phishing links, fake giveaways, nitro scams
-   - Financial scams, fake job offers
-   - Malware/virus distribution
-
-2. Harassment:
-   - Targeted attacks, doxxing, threats
-   - Bullying, repeated harassment
-   - Discrimination, hate speech
-
-3. NSFW Content:
-   - Explicit sexual content
-   - Violence, self-harm promotion
-   - Gore, illegal activities
-
-4. Spam:
-   - Repetitive messages, link spam
-   - Mention spam, emoji spam
-   - Server promotion without permission
-
-5. Bypass Attempts (CRITICAL):
-   - Unicode obfuscation, character substitution
-   - Zero-width characters, invisible text
-   - Leetspeak, mixed language obfuscation
-   - Repeated characters to break filters
-
-MESSAGE TO ANALYZE:
-"${processedContent}"
-
-RESPONSE FORMAT:
-ONLY respond with:
-"VIOLATION: [specific violation type] - [brief reason]" if it violates rules
-"OK" if completely acceptable
-
-BEHAVIOR GUIDELINES:
-- Be extremely strict - if there's ANY doubt, flag it
-- Prioritize community safety over false positives
-- Consider context but flag suspicious content
-- Treat bypass attempts as serious violations
-
-EXAMPLES:
-- "Free nitro here discord.gift/abc123" -> VIOLATION: Scam - Nitro phishing link
-- "N1gg@ get out" -> VIOLATION: Hate speech - Racial slur with bypass
-- "kys idiot" -> VIOLATION: Harassment - Encouraging self-harm
-- "Check my stream at twitch.tv/..." -> VIOLATION: Spam - Unauthorized promotion
-- "h3ll0 fr13nd$" -> VIOLATION: Bypass - Obfuscated greeting`
+Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or "OK" if it's fine. Be very strict and catch any potential violations.`
                     }]
                 }],
                 generationConfig: {
@@ -465,7 +402,7 @@ async function autoModerate(message) {
     if (GEMINI_API_KEY) {
         const aiResult = await checkWithAI(content);
         if (aiResult.isViolation) {
-            return await handleViolation(message, `AI detected: ${aiResult.reason}`, 25);
+            return await handleViolation(message, `AI detected violation: ${aiResult.reason}`, 25);
         }
     }
     
@@ -797,21 +734,13 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.ClientReady, async () => {
     // Record for all guilds
     client.guilds.cache.forEach(async guild => {
-        try {
-            await recordMemberCount(guild);
-        } catch (error) {
-            console.error(`Error recording member count for guild ${guild.id}:`, error);
-        }
+        await recordMemberCount(guild);
     });
     
     // Set up interval to record every 6 hours
     setInterval(async () => {
         client.guilds.cache.forEach(async guild => {
-            try {
-                await recordMemberCount(guild);
-            } catch (error) {
-                console.error(`Error recording member count for guild ${guild.id}:`, error);
-            }
+            await recordMemberCount(guild);
         });
     }, 6 * 60 * 60 * 1000); // 6 hours
 });
@@ -2155,11 +2084,7 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
         // Debounce updates to avoid too many writes
         clearTimeout(client.presenceUpdateTimeout);
         client.presenceUpdateTimeout = setTimeout(async () => {
-            try {
-                await recordMemberCount(newMember.guild);
-            } catch (error) {
-                console.error(`Error recording member count for guild ${newMember.guild.id}:`, error);
-            }
+            await recordMemberCount(newMember.guild);
         }, 30000); // 30 second debounce
     }
 });
