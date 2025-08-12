@@ -9,11 +9,8 @@ const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['YOUR_DISCORD_USER_ID'];
 const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 
-// AI API Keys
+// AI API Keys (Only Gemini now)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''; // Your key will work with GPT-5 Nano
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const GROK_API_KEY = process.env.GROK_API_KEY || '';
 
 // Create a new client instance
 const client = new Client({ 
@@ -249,19 +246,37 @@ function containsNSFWContent(content) {
     return false;
 }
 
-// Check with Gemini AI
+// Check with Gemini AI (Only AI checker now)
 async function checkWithGemini(content) {
     if (!GEMINI_API_KEY) return { isViolation: false, reason: '' };
     
     try {
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{
                     parts: [{
-                        text: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
+                        text: `You are a Discord moderation AI. Analyze this message for violations in ANY language. 
+Check for: 
+1. Discord ToS violations (scams, phishing, spam, harassment)
+2. NSFW content (hate speech, explicit content, threats)
+3. Bypass attempts (obfuscation, alternate spellings, hidden characters)
+4. Toxic behavior (bullying, discrimination)
+
+Respond ONLY with "VIOLATION: [specific reason]" if it violates Discord rules or "OK" if it's fine.
+Message to analyze: "${content}"`
                     }]
-                }]
+                }],
+                generationConfig: {
+                    temperature: 0.0,
+                    maxOutputTokens: 100
+                },
+                safetySettings: [
+                    {
+                        category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        threshold: "BLOCK_ONLY_HIGH"
+                    }
+                ]
             },
             {
                 headers: {
@@ -286,177 +301,10 @@ async function checkWithGemini(content) {
     }
 }
 
-// Check with OpenAI (now using GPT-5 Nano)
-async function checkWithOpenAI(content) {
-    if (!OPENAI_API_KEY) return { isViolation: false, reason: '' };
-    
-    try {
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: "gpt-5-turbo-preview", // GPT-5 Nano model
-                messages: [{
-                    role: "user",
-                    content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
-                }],
-                max_tokens: 100,
-                temperature: 0.0
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const result = response.data.choices?.[0]?.message?.content || 'OK';
-        
-        if (result.startsWith('VIOLATION:')) {
-            return {
-                isViolation: true,
-                reason: result.replace('VIOLATION:', '').trim()
-            };
-        }
-        
-        return { isViolation: false, reason: '' };
-    } catch (error) {
-        console.error('OpenAI API error:', error.message);
-        // Fallback to gpt-4o-mini if gpt-5-turbo-preview is not available
-        try {
-            const response = await axios.post(
-                'https://api.openai.com/v1/chat/completions',
-                {
-                    model: "gpt-4o-mini",
-                    messages: [{
-                        role: "user",
-                        content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
-                    }],
-                    max_tokens: 100,
-                    temperature: 0.0
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-            
-            const result = response.data.choices?.[0]?.message?.content || 'OK';
-            
-            if (result.startsWith('VIOLATION:')) {
-                return {
-                    isViolation: true,
-                    reason: result.replace('VIOLATION:', '').trim()
-                };
-            }
-            
-            return { isViolation: false, reason: '' };
-        } catch (fallbackError) {
-            console.error('OpenAI Fallback API error:', fallbackError.message);
-            return { isViolation: false, reason: '' };
-        }
-    }
-}
-
-// Check with Anthropic Claude
-async function checkWithAnthropic(content) {
-    if (!ANTHROPIC_API_KEY) return { isViolation: false, reason: '' };
-    
-    try {
-        const response = await axios.post(
-            'https://api.anthropic.com/v1/messages',
-            {
-                model: "claude-3-haiku-20240307",
-                max_tokens: 100,
-                messages: [{
-                    role: "user",
-                    content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
-                }]
-            },
-            {
-                headers: {
-                    'x-api-key': ANTHROPIC_API_KEY,
-                    'anthropic-version': '2023-06-01',
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const result = response.data.content?.[0]?.text || 'OK';
-        
-        if (result.startsWith('VIOLATION:')) {
-            return {
-                isViolation: true,
-                reason: result.replace('VIOLATION:', '').trim()
-            };
-        }
-        
-        return { isViolation: false, reason: '' };
-    } catch (error) {
-        console.error('Anthropic API error:', error.message);
-        return { isViolation: false, reason: '' };
-    }
-}
-
-// Check with Grok AI
-async function checkWithGrok(content) {
-    if (!GROK_API_KEY) return { isViolation: false, reason: '' };
-    
-    try {
-        const response = await axios.post(
-            'https://api.x.ai/v1/chat/completions',
-            {
-                model: "grok-3-mini",
-                messages: [{
-                    role: "user",
-                    content: `Analyze this message for violations. Respond ONLY with "VIOLATION: [reason]" if it violates Discord terms or "OK" if it's fine:\n\n"${content}"`
-                }],
-                temperature: 0,
-                max_tokens: 100
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${GROK_API_KEY}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const result = response.data.choices?.[0]?.message?.content || 'OK';
-        
-        if (result.startsWith('VIOLATION:')) {
-            return {
-                isViolation: true,
-                reason: result.replace('VIOLATION:', '').trim()
-            };
-        }
-        
-        return { isViolation: false, reason: '' };
-    } catch (error) {
-        console.error('Grok API error:', error.message);
-        return { isViolation: false, reason: '' };
-    }
-}
-
-// Multi-AI checker with fallback
+// Updated multi-AI checker (only Gemini now):
 async function checkWithAI(content) {
-    // Try Gemini first
-    let result = await checkWithGemini(content);
-    if (result.isViolation) return result;
-    
-    // Try OpenAI second (GPT-5 Nano)
-    result = await checkWithOpenAI(content);
-    if (result.isViolation) return result;
-    
-    // Try Anthropic third
-    result = await checkWithAnthropic(content);
-    if (result.isViolation) return result;
-    
-    // Try Grok last
-    result = await checkWithGrok(content);
-    return result;
+    // Only use Gemini
+    return await checkWithGemini(content);
 }
 
 // Auto-moderation function with strike system
@@ -487,8 +335,8 @@ async function autoModerate(message) {
         return await handleViolation(message, 'Inappropriate content detected', 20);
     }
     
-    // Check with AI if any API key is available
-    if (GEMINI_API_KEY || OPENAI_API_KEY || ANTHROPIC_API_KEY || GROK_API_KEY) {
+    // Check with Gemini AI if API key is available
+    if (GEMINI_API_KEY) {
         const aiResult = await checkWithAI(content);
         if (aiResult.isViolation) {
             return await handleViolation(message, `AI detected violation: ${aiResult.reason}`, 25);
