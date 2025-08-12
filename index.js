@@ -14,6 +14,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildPresences, // Added for online member tracking
         GatewayIntentBits.GuildModeration
     ] 
 });
@@ -61,14 +62,24 @@ async function saveMemberData(guildId, data) {
     }
 }
 
-// Record member count
+// Record member count with proper online counting
 async function recordMemberCount(guild) {
     const now = new Date();
+    
+    // Properly count online members
+    const onlineMembers = guild.members.cache.filter(member => {
+        return member.presence && 
+               (member.presence.status === 'online' || 
+                member.presence.status === 'idle' || 
+                member.presence.status === 'dnd');
+    }).size;
+    
     const dataPoint = {
         timestamp: now.toISOString(),
         totalMembers: guild.memberCount,
         humanMembers: guild.members.cache.filter(m => !m.user.bot).size,
-        botMembers: guild.members.cache.filter(m => m.user.bot).size
+        botMembers: guild.members.cache.filter(m => m.user.bot).size,
+        onlineMembers: onlineMembers
     };
 
     const memberData = await loadMemberData(guild.id);
@@ -973,12 +984,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // Member count command
         else if (commandName === 'membercount') {
+            // Get current online members properly
+            const onlineMembers = interaction.guild.members.cache.filter(member => {
+                return member.presence && 
+                       (member.presence.status === 'online' || 
+                        member.presence.status === 'idle' || 
+                        member.presence.status === 'dnd');
+            }).size;
+            
             const totalMembers = interaction.guild.memberCount;
-            const onlineMembers = interaction.guild.members.cache.filter(member => 
-                member.presence?.status === 'online' || 
-                member.presence?.status === 'idle' || 
-                member.presence?.status === 'dnd'
-            ).size;
             const botMembers = interaction.guild.members.cache.filter(member => member.user.bot).size;
             const humanMembers = totalMembers - botMembers;
 
@@ -1007,25 +1021,27 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 // Calculate statistics
                 const currentData = memberData[memberData.length - 1];
-                const previousData = memberData[memberData.length - 2];
+                const previousData = memberData[Math.max(0, memberData.length - 2)];
                 
                 const growth24h = currentData.totalMembers - previousData.totalMembers;
-                const growthRate = ((growth24h / previousData.totalMembers) * 100).toFixed(2);
+                const growthRate = previousData.totalMembers > 0 ? 
+                    ((growth24h / previousData.totalMembers) * 100).toFixed(2) : '0.00';
                 
                 // Calculate 7-day growth
                 const sevenDaysAgoIndex = Math.max(0, memberData.length - 7);
                 const sevenDaysAgoData = memberData[sevenDaysAgoIndex];
                 const growth7d = currentData.totalMembers - sevenDaysAgoData.totalMembers;
                 
-                // Prepare chart data
-                const labels = memberData.map(point => {
+                // Prepare chart data (last 30 data points or 30 days)
+                const chartData = memberData.slice(-30); // Last 30 data points
+                const labels = chartData.map(point => {
                     const date = new Date(point.timestamp);
                     return `${date.getMonth()+1}/${date.getDate()}`;
                 });
                 
-                const totalMembersData = memberData.map(point => point.totalMembers);
-                const humanMembersData = memberData.map(point => point.humanMembers);
-                const botMembersData = memberData.map(point => point.botMembers);
+                const totalMembersData = chartData.map(point => point.totalMembers);
+                const humanMembersData = chartData.map(point => point.humanMembers);
+                const onlineMembersData = chartData.map(point => point.onlineMembers);
 
                 // Create line chart
                 const chart = new QuickChart();
@@ -1053,8 +1069,8 @@ client.on(Events.InteractionCreate, async interaction => {
                                 pointRadius: 2
                             },
                             {
-                                label: 'Bots',
-                                data: botMembersData,
+                                label: 'Online Members',
+                                data: onlineMembersData,
                                 borderColor: '#ED4245',
                                 backgroundColor: 'rgba(237, 66, 69, 0.1)',
                                 fill: false,
@@ -1067,7 +1083,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         plugins: {
                             title: {
                                 display: true,
-                                text: `${interaction.guild.name} - Member Growth (Last 30 Days)`,
+                                text: `${interaction.guild.name} - Member Growth`,
                                 font: {
                                     size: 14
                                 }
@@ -1099,11 +1115,12 @@ client.on(Events.InteractionCreate, async interaction => {
                 const statsText = `📊 **Server Analytics**\n\n` +
                     `👥 **Current Members:** ${currentData.totalMembers.toLocaleString()}\n` +
                     `🧑 Humans: ${currentData.humanMembers.toLocaleString()}\n` +
+                    `🟢 Online: ${currentData.onlineMembers.toLocaleString()}\n` +
                     `🤖 Bots: ${currentData.botMembers.toLocaleString()}\n\n` +
                     `📈 **Recent Growth:**\n` +
                     `24h: ${growth24h >= 0 ? '+' : ''}${growth24h} members (${growth24h >= 0 ? '+' : ''}${growthRate}%)\n` +
                     `7d: ${growth7d >= 0 ? '+' : ''}${growth7d} members\n\n` +
-                    `📅 Data collected over ${memberData.length} days`;
+                    `📅 Data points: ${memberData.length}`;
 
                 await interaction.editReply({
                     content: statsText,
@@ -1130,6 +1147,18 @@ client.on(Events.InteractionCreate, async interaction => {
                 ephemeral: true
             });
         }
+    }
+});
+
+// Handle member updates for better online tracking
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+    // Only record if presence status changed
+    if (oldMember.presence?.status !== newMember.presence?.status) {
+        // Debounce updates to avoid too many writes
+        clearTimeout(client.presenceUpdateTimeout);
+        client.presenceUpdateTimeout = setTimeout(async () => {
+            await recordMemberCount(newMember.guild);
+        }, 30000); // 30 second debounce
     }
 });
 
