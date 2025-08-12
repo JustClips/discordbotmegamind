@@ -132,4 +132,108 @@ client.on(Events.InteractionCreate, async interaction => {
 
             // Send DM to user
             try {
-                await 
+                await user.send(`You have been muted in ${interaction.guild.name} for ${duration} minutes.\n**Reason:** ${reason}`);
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+        }
+
+        // Purge all messages
+        else if (commandName === 'purge') {
+            const amount = options.getInteger('amount');
+
+            if (amount < 1 || amount > 100) {
+                return await interaction.reply({
+                    content: '❌ You need to input a number between 1 and 100!',
+                    ephemeral: true
+                });
+            }
+
+            await interaction.deferReply({ ephemeral: true });
+
+            const fetched = await interaction.channel.messages.fetch({ limit: amount });
+            await interaction.channel.bulkDelete(fetched, true);
+
+            const reply = await interaction.editReply({
+                content: `✅ Successfully deleted ${fetched.size} messages!`
+            });
+
+            // Delete the success message after 5 seconds
+            setTimeout(() => {
+                reply.delete().catch(console.error);
+            }, 5000);
+        }
+
+        // Purge human messages only
+        else if (commandName === 'purgehumans') {
+            const amount = options.getInteger('amount');
+
+            if (amount < 1 || amount > 100) {
+                return await interaction.reply({
+                    content: '❌ You need to input a number between 1 and 100!',
+                    ephemeral: true
+                });
+            }
+
+            await interaction.deferReply({ ephemeral: true });
+
+            const fetched = await interaction.channel.messages.fetch({ limit: amount });
+            const humanMessages = fetched.filter(msg => !msg.author.bot);
+            
+            await interaction.channel.bulkDelete(humanMessages, true);
+
+            const reply = await interaction.editReply({
+                content: `✅ Successfully deleted ${humanMessages.size} human messages!`
+            });
+
+            // Delete the success message after 5 seconds
+            setTimeout(() => {
+                reply.delete().catch(console.error);
+            }, 5000);
+        }
+
+        // Purge bot messages only
+        else if (commandName === 'purgebots') {
+            const amount = options.getInteger('amount');
+
+            if (amount < 1 || amount > 100) {
+                return await interaction.reply({
+                    content: '❌ You need to input a number between 1 and 100!',
+                    ephemeral: true
+                });
+            }
+
+            await interaction.deferReply({ ephemeral: true });
+
+            const fetched = await interaction.channel.messages.fetch({ limit: amount });
+            const botMessages = fetched.filter(msg => msg.author.bot);
+            
+            await interaction.channel.bulkDelete(botMessages, true);
+
+            const reply = await interaction.editReply({
+                content: `✅ Successfully deleted ${botMessages.size} bot messages!`
+            });
+
+            // Delete the success message after 5 seconds
+            setTimeout(() => {
+                reply.delete().catch(console.error);
+            }, 5000);
+        }
+
+    } catch (error) {
+        console.error(error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+                content: '❌ There was an error while executing this command!',
+                ephemeral: true
+            });
+        } else if (interaction.deferred) {
+            await interaction.editReply({
+                content: '❌ There was an error while executing this command!'
+            });
+        }
+    }
+});
+
+// Login to Discord
+client.login(process.env.DISCORD_TOKEN);
