@@ -240,16 +240,15 @@ async function learnFromConversation(message) {
     }
 }
 
-// --- UPDATED checkWithGemini FUNCTION WITH RETRY LOGIC ---
-// Enhanced AI with conversation context and knowledge, including retry logic for rate limits
+// --- UPDATED checkWithGemini FUNCTION WITH BETTER ERROR HANDLING ---
 async function checkWithGemini(content, channelId, userId, username, isDirectMessage = false) {
     if (!OPENAI_API_KEY) {
         console.warn("checkWithGemini called but OPENAI_API_KEY is missing.");
         return { isViolation: false, reason: '', response: '' };
     }
 
-    const MAX_RETRIES = 3; // Maximum number of retries for rate limits
-    const BASE_DELAY_MS = 1500; // Initial delay (1.5 seconds) - adjust if needed
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 1500;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
@@ -268,7 +267,6 @@ async function checkWithGemini(content, channelId, userId, username, isDirectMes
             let knowledgeText = '';
             if (Object.keys(knowledge.learned).length > 0) {
                 knowledgeText = '\n\nServer Knowledge:\n';
-                // Send last 5 learned items for context, not 10, to keep prompt smaller
                 Object.values(knowledge.learned).slice(-5).forEach(item => {
                     knowledgeText += `- ${item.content}\n`;
                 });
@@ -279,7 +277,6 @@ async function checkWithGemini(content, channelId, userId, username, isDirectMes
 
             let prompt;
             if (isDirectMessage) {
-                // For direct messages, be more conversational
                 prompt = `You are AutoModAI, a friendly and knowledgeable Discord moderator bot. You're chatting directly with a user. Be helpful, casual, and informative.
 
 ${knowledgeText}
@@ -291,7 +288,6 @@ ${formattedContext || 'No recent context'}
 
 Respond naturally like a human moderator would. Keep it casual but helpful. If they're asking about rules, explain them clearly. If they're asking for help, guide them. If they're being inappropriate, politely redirect them.`;
             } else {
-                // For regular moderation
                 prompt = `You are AutoModAI — a human-like, context-aware Discord moderation assistant. Analyze a single message (and optional nearby context) and decide whether it violates server rules. Be rigorous about intent and obfuscation (unicode lookalikes, zero-width, repeated chars, homograph attacks, link shorteners). Use context to detect sarcasm, quoted text, roleplay, and friendly banter.
 
 OUTPUT RULES (MANDATORY)
@@ -328,35 +324,48 @@ ${formattedContext || 'No recent context'}${knowledgeText}
 Respond ONLY with the JSON object as specified.`;
             }
 
-            // Use OpenAI instead of Gemini with correct parameters for gpt-5-nano (removed temperature parameter)
+            // Use OpenAI with correct parameters (removed temperature)
             const response = await openai.chat.completions.create({
-                model: "gpt-5-nano",
+                model: "gpt-5",
                 messages: [
                     {
                         role: "user",
                         content: prompt
                     }
                 ],
-                max_completion_tokens: isDirectMessage ? 500 : 300, // Changed from max_tokens
-                response_format: { type: "json_object" } // Ensure JSON response
+                max_completion_tokens: isDirectMessage ? 500 : 300,
+                response_format: { type: "json_object" }
             });
 
-            const result = response.choices[0]?.message?.content || '';
+            const result = response.choices[0]?.message?.content?.trim() || '';
+
+            // Handle empty responses
+            if (!result) {
+                console.warn("AI returned empty response");
+                return { isViolation: false, reason: '', response: '' };
+            }
 
             if (isDirectMessage) {
-                // For direct messages, return the natural response
                 return {
                     isViolation: false,
-                    response: result.trim()
+                    response: result
                 };
             } else {
-                // For moderation, parse JSON response
+                // For moderation, parse JSON response with better error handling
                 try {
-                    const aiResponse = JSON.parse(result);
+                    // Extract JSON from response if there's extra text
+                    let jsonString = result;
+                    const jsonStart = result.indexOf('{');
+                    const jsonEnd = result.lastIndexOf('}');
+                    
+                    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                        jsonString = result.substring(jsonStart, jsonEnd + 1);
+                    }
+                    
+                    const aiResponse = JSON.parse(jsonString);
 
                     // Validate required fields
                     if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
-                        // Only act on violations with confidence > 0.7 (you might adjust this)
                         if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
                             return {
                                 isViolation: true,
@@ -370,64 +379,75 @@ Respond ONLY with the JSON object as specified.`;
                                 response: ''
                             };
                         }
-                        // If action is 'allow' or confidence <= 0.7, it's not a violation we act on
                         return { isViolation: false, reason: '', response: '' };
                     } else {
-                        // Response didn't have the expected structure
                         console.error('AI response missing required fields:', aiResponse);
                         console.error('Raw AI response:', result);
                     }
                 } catch (parseError) {
                     console.error('AI response parsing error (JSON invalid):', parseError);
                     console.error('Raw AI response that failed to parse:', result);
+                    
+                    // Try to extract JSON with regex as fallback
+                    const jsonMatch = result.match(/\{(?:[^{}]|(?R))*\}/g);
+                    if (jsonMatch && jsonMatch[0]) {
+                        try {
+                            const aiResponse = JSON.parse(jsonMatch[0]);
+                            if (aiResponse.action && aiResponse.category && aiResponse.confidence !== undefined) {
+                                if (aiResponse.action !== 'allow' && aiResponse.confidence > 0.7) {
+                                    return {
+                                        isViolation: true,
+                                        reason: aiResponse.explanation,
+                                        action: aiResponse.action,
+                                        category: aiResponse.category,
+                                        severity: aiResponse.severity,
+                                        confidence: aiResponse.confidence,
+                                        evidence: aiResponse.evidence,
+                                        duration: aiResponse.suggested_duration_minutes,
+                                        response: ''
+                                    };
+                                }
+                            }
+                        } catch (secondParseError) {
+                            console.error('Second parsing attempt also failed:', secondParseError);
+                        }
+                    }
                 }
             }
 
-            // If we get here in the 'else' block, it means parsing failed or structure was wrong.
-            // We should not retry for parsing errors, as retrying the same prompt won't fix it.
-            // Return a default non-violation response.
             return { isViolation: false, reason: '', response: '' };
 
         } catch (error) {
             console.error(`OpenAI API attempt ${attempt + 1} failed:`);
 
-            // Check if it's a rate limit error (429)
             if (error.response && error.response.status === 429) {
-                // Only retry if we have attempts left
                 if (attempt < MAX_RETRIES) {
-                    // Calculate delay - simple exponential backoff
                     const retryDelay = BASE_DELAY_MS * Math.pow(2, attempt);
                     console.warn(`Rate limit (429) hit. Retrying in ${retryDelay}ms... (Attempt ${attempt + 1}/${MAX_RETRIES})`);
 
-                    // Check for 'Retry-After' header (value is usually seconds)
                     const retryAfterHeader = error.response.headers['retry-after'];
                     let finalDelay = retryDelay;
                     if (retryAfterHeader) {
                         const retryAfterSeconds = parseInt(retryAfterHeader, 10);
                         if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
-                             finalDelay = retryAfterSeconds * 1000; // Convert to milliseconds
+                             finalDelay = retryAfterSeconds * 1000;
                              console.log(`Using server-suggested Retry-After delay: ${finalDelay}ms`);
                         }
                     }
 
                     await delay(finalDelay);
-                    continue; // Retry the loop
+                    continue;
                 } else {
                     console.error(`OpenAI API error: Max retries (${MAX_RETRIES}) exceeded for rate limit (429).`);
-                    // Log more details if available
                     if (error.response?.data) {
                         console.error('Rate limit details:', error.response.data);
                     }
                 }
             } else {
-                // Handle other errors (network, 5xx, etc.)
                 console.error('OpenAI API error (non-429):', error.message);
-                // Log more details if available
                 if (error.response) {
                     console.error('Status:', error.response.status);
                     console.error('Headers:', error.response.headers);
-                    // Be careful logging data, it might be large
-                    // console.error('Data:', JSON.stringify(error.response.data, null, 2));
                 } else if (error.request) {
                     console.error('No response received (network issue?):', error.request);
                 } else {
@@ -435,16 +455,13 @@ Respond ONLY with the JSON object as specified.`;
                 }
             }
 
-            // If it's not a retryable 429, or retries are exhausted, stop trying.
             break;
         }
     }
 
-    // If the loop completes without returning, it means retries failed or an error occurred that we don't retry.
     console.warn("checkWithGemini: Returning default non-violation response after errors/retries.");
     return { isViolation: false, reason: '', response: '' };
 }
-
 
 // Record member count with proper online counting
 async function recordMemberCount(guild) {
