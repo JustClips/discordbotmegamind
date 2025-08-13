@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const QuickChart = require('quickchart-js');
 const fs = require('fs').promises;
-const OpenAI = require('openai');
 
 // Configuration - Using environment variable for OWNER_IDS
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || '1398413061169352949';
@@ -10,13 +9,62 @@ const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',') : ['Y
 const LOG_CHANNEL_ID = '1404675690007105596'; // Log channel ID
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+// Channels for moderation
+const MODERATED_CHANNELS = [
+    '1404629250908360874',
+    '1364392044054712474',
+    '1364391982822068244',
+    '1403173405515317328',
+    '1364389091193520223',
+    '1397004108518523080'
+];
+
 // Channels to exclude from AI analysis
 const EXCLUDED_CHANNELS = ['1402359842055651329', '1364387827386683484'];
 
-// Initialize OpenAI client
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+// File paths for persistent storage
+const USER_PROFILES_FILE = './userProfiles.json';
+const FACTS_FILE = './facts.json';
+const CONVERSATIONS_FILE = './conversations.json';
 
-// Create a new client instance
+// In-memory storage (loaded from files on startup)
+let userProfiles = {};
+let facts = {};
+let conversations = {};
+
+// Load data from files
+async function loadData() {
+    try {
+        userProfiles = JSON.parse(await fs.readFile(USER_PROFILES_FILE, 'utf8')) || {};
+    } catch (error) {
+        userProfiles = {};
+    }
+    
+    try {
+        facts = JSON.parse(await fs.readFile(FACTS_FILE, 'utf8')) || {};
+    } catch (error) {
+        facts = {};
+    }
+    
+    try {
+        conversations = JSON.parse(await fs.readFile(CONVERSATIONS_FILE, 'utf8')) || {};
+    } catch (error) {
+        conversations = {};
+    }
+}
+
+// Save data to files
+async function saveData() {
+    try {
+        await fs.writeFile(USER_PROFILES_FILE, JSON.stringify(userProfiles, null, 2));
+        await fs.writeFile(FACTS_FILE, JSON.stringify(facts, null, 2));
+        await fs.writeFile(CONVERSATIONS_FILE, JSON.stringify(conversations, null, 2));
+    } catch (error) {
+        console.error('Error saving data:', error);
+    }
+}
+
+// Initialize Discord client
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
@@ -33,6 +81,169 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates
     ] 
 });
+
+// Moderation API call
+async function moderateContent(content) {
+    if (!OPENAI_API_KEY) {
+        console.error('OpenAI API key not configured');
+        return { flagged: false };
+    }
+    
+    try {
+        const response = await fetch('https://api.openai.com/v1/moderations', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                input: content,
+                model: 'omni-moderation-latest'
+            })
+        });
+        
+        const data = await response.json();
+        return data.results[0];
+    } catch (error) {
+        console.error('Moderation API error:', error);
+        return { flagged: false }; // Fail open for moderation
+    }
+}
+
+// Chat completions API call
+async function getChatResponse(messages) {
+    if (!OPENAI_API_KEY) {
+        return "AI functionality is not configured. Please set OPENAI_API_KEY.";
+    }
+    
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${OPENAI_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'gpt-5-nano',
+                messages: messages,
+                max_tokens: 100, // Limit tokens per response
+                temperature: 0.7
+            })
+        });
+        
+        const data = await response.json();
+        if (data.error) {
+            console.error('Chat API error:', data.error);
+            return "Sorry, I'm having trouble thinking right now. Please try again later!";
+        }
+        return data.choices[0].message.content.trim();
+    } catch (error) {
+        console.error('Chat API error:', error);
+        return "Sorry, I'm having trouble thinking right now. Please try again later!";
+    }
+}
+
+// Extract facts from conversation
+async function extractFacts(content, userId, channelId) {
+    try {
+        const messages = [
+            {
+                role: "system",
+                content: `Extract useful facts from this message that could help understand the user or context better. 
+                Respond ONLY with a JSON object containing key-value pairs of facts. 
+                Example: {"user_interest": "gaming", "mentioned_project": "discord bot"}`
+            },
+            {
+                role: "user",
+                content: content
+            }
+        ];
+        
+        const response = await getChatResponse(messages);
+        
+        // Try to parse the JSON response
+        try {
+            const factsObj = JSON.parse(response);
+            // Store facts by user and channel
+            if (!facts[userId]) facts[userId] = {};
+            if (!facts[userId][channelId]) facts[userId][channelId] = {};
+            
+            Object.assign(facts[userId][channelId], factsObj);
+            
+            // Keep only recent facts (limit to 10 per user-channel)
+            const factKeys = Object.keys(facts[userId][channelId]);
+            if (factKeys.length > 10) {
+                const keysToRemove = factKeys.slice(0, factKeys.length - 10);
+                keysToRemove.forEach(key => delete facts[userId][channelId][key]);
+            }
+        } catch (parseError) {
+            // Ignore if not valid JSON
+        }
+    } catch (error) {
+        console.error('Fact extraction error:', error);
+    }
+}
+
+// Get user profile
+function getUserProfile(userId, guild) {
+    if (!userProfiles[userId]) {
+        userProfiles[userId] = {
+            id: userId,
+            username: 'Unknown',
+            roles: []
+        };
+    }
+    
+    // Update user info if available
+    if (guild) {
+        const member = guild.members.cache.get(userId);
+        if (member) {
+            userProfiles[userId].username = member.user.username;
+            userProfiles[userId].roles = member.roles.cache.map(role => role.name);
+        }
+    }
+    
+    return userProfiles[userId];
+}
+
+// Manage conversation history
+function getConversationHistory(userId) {
+    if (!conversations[userId]) {
+        conversations[userId] = [];
+    }
+    return conversations[userId];
+}
+
+function addToConversationHistory(userId, message) {
+    if (!conversations[userId]) {
+        conversations[userId] = [];
+    }
+    
+    conversations[userId].push(message);
+    
+    // Keep only last 5 messages to limit token usage
+    if (conversations[userId].length > 5) {
+        conversations[userId] = conversations[userId].slice(-5);
+    }
+}
+
+// Build system prompt with context
+function buildSystemPrompt(userId, channelId) {
+    const userProfile = userProfiles[userId] || { username: 'Unknown', roles: [] };
+    const userFacts = facts[userId] ? facts[userId][channelId] || {} : {};
+    
+    let prompt = `You are AutoModAI, a helpful Discord bot and server moderator. 
+    User: ${userProfile.username}
+    Roles: ${userProfile.roles.join(', ')}
+    Context:`;
+    
+    // Add user facts
+    for (const [key, value] of Object.entries(userFacts)) {
+        prompt += ` ${key}: ${value}.`;
+    }
+    
+    return prompt;
+}
 
 // Check if user has permission to use commands
 function hasPermission(member) {
@@ -239,7 +450,7 @@ async function learnFromConversation(message) {
 
 // Get AI response for conversation (using cheaper model)
 async function getAIResponse(conversationContext, userName, guildName) {
-    if (!openai) {
+    if (!OPENAI_API_KEY) {
         return "AI functionality is not configured. Please set OPENAI_API_KEY.";
     }
 
@@ -265,7 +476,7 @@ async function getAIResponse(conversationContext, userName, guildName) {
         ];
 
         // Add recent conversation context
-        conversationContext.messages.slice(-10).forEach(msg => {
+        conversationContext.messages.slice(-5).forEach(msg => {
             if (msg.isBot) {
                 messages.push({ role: "assistant", content: msg.content });
             } else {
@@ -279,14 +490,8 @@ async function getAIResponse(conversationContext, userName, guildName) {
             content: `${userName}: ${conversationContext.currentMessage}` 
         });
 
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo", // Using cheaper model
-            messages: messages,
-            max_tokens: 200,
-            temperature: 0.7
-        });
-
-        return completion.choices[0].message.content.trim();
+        const completion = await getChatResponse(messages);
+        return completion;
     } catch (error) {
         console.error('OpenAI API error:', error);
         return "Sorry, I'm having trouble thinking right now. Please try again later!";
@@ -295,7 +500,7 @@ async function getAIResponse(conversationContext, userName, guildName) {
 
 // Get AI moderation decision (using cheaper model)
 async function getAIModerationDecision(messageContent, contextMessages = [], authorName) {
-    if (!openai) {
+    if (!OPENAI_API_KEY) {
         return null;
     }
 
@@ -304,7 +509,7 @@ async function getAIModerationDecision(messageContent, contextMessages = [], aut
         let contextString = "";
         if (contextMessages.length > 0) {
             contextString = "Recent conversation context:\n";
-            contextMessages.slice(-5).forEach(msg => {
+            contextMessages.slice(-3).forEach(msg => {
                 contextString += `${msg.username}: ${msg.content}\n`;
             });
         }
@@ -341,25 +546,18 @@ Message to analyze: "${messageContent}"
 ${contextString}
 Author: ${authorName}`;
 
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo", // Using cheaper model
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: 250,
-            temperature: 0.1
-        });
-
-        const response = completion.choices[0].message.content.trim();
+        const completion = await getChatResponse([{ role: "user", content: prompt }]);
         
         // Try to parse the JSON response
         try {
             // Extract JSON from response if it contains other text
-            const jsonMatch = response.match(/\{.*\}/s);
+            const jsonMatch = completion.match(/\{.*\}/s);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
             }
-            return JSON.parse(response);
+            return JSON.parse(completion);
         } catch (parseError) {
-            console.error('Failed to parse AI moderation response:', response);
+            console.error('Failed to parse AI moderation response:', completion);
             return null;
         }
     } catch (error) {
@@ -370,7 +568,7 @@ Author: ${authorName}`;
 
 // Get AI command interpretation (using cheapest model)
 async function getAICommand(messageContent, guild, author) {
-    if (!openai) {
+    if (!OPENAI_API_KEY) {
         return null;
     }
 
@@ -424,25 +622,18 @@ For mute, duration is in minutes.
 
 Respond with ONLY the JSON object, nothing else.`;
 
-        const completion = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo", // Using cheapest model
-            messages: [{ role: "user", content: prompt }],
-            max_tokens: 150,
-            temperature: 0.3
-        });
-
-        const response = completion.choices[0].message.content.trim();
+        const completion = await getChatResponse([{ role: "user", content: prompt }]);
         
         // Try to parse the JSON response
         try {
             // Extract JSON from response if it contains other text
-            const jsonMatch = response.match(/\{.*\}/s);
+            const jsonMatch = completion.match(/\{.*\}/s);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
             }
-            return JSON.parse(response);
+            return JSON.parse(completion);
         } catch (parseError) {
-            console.error('Failed to parse AI command response:', response);
+            console.error('Failed to parse AI command response:', completion);
             return null;
         }
     } catch (error) {
@@ -1260,6 +1451,10 @@ client.once(Events.ClientReady, async () => {
     } catch (error) {
         console.error(error);
     }
+    
+    // Load data
+    await loadData();
+    console.log('Data loaded successfully');
 });
 
 // Record member count when bot starts and every 6 hours
@@ -1327,7 +1522,7 @@ client.on(Events.MessageCreate, async message => {
         );
         
         // Get AI response for DMs
-        if (openai) {
+        if (OPENAI_API_KEY) {
             try {
                 const aiResponse = await getAIResponse({
                     messages: context,
@@ -1858,7 +2053,7 @@ client.on(Events.MessageCreate, async message => {
         );
         
         // Get AI response if API key is configured
-        if (openai) {
+        if (OPENAI_API_KEY) {
             try {
                 const aiResponse = await getAIResponse({
                     messages: context,
@@ -2995,6 +3190,18 @@ client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
             await recordMemberCount(newMember.guild);
         }, 30000); // 30 second debounce
     }
+});
+
+// Periodic save (every 5 minutes)
+setInterval(async () => {
+    await saveData();
+}, 5 * 60 * 1000);
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('Shutting down gracefully...');
+    await saveData();
+    process.exit(0);
 });
 
 // Login to Discord
