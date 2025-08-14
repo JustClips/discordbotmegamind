@@ -3,15 +3,18 @@
  *  ---------------------------------------------------------------
  *  Features:
  *   • All original moderation commands (mute, purge, lock, …)
- *   • /subscription – give/extend a subscription (stores key & expiry)
+ *   • /subscription – give/extend a subscription (in‑memory + JSON)
  *   • /panel       – private embed with subscription info + Show Key
  *   • /purchase    – embed with Create Ticket button → private ticket channel
+ *   • /addsub      – **NEW** – store subscription in MySQL (DreamHost)
  *
- *  New: role 1405035087703183492 can now use /panel (and any other
- *  command that passes the normal permission check).
+ *  All data is persisted:
+ *   • In‑memory map + JSON file (fallback) – for quick access.
+ *   • MySQL table `subscriptions` – survives restarts, can be queried
+ *     externally, and is the source of truth.
  *
- *  Replace the placeholder values (MOD_ROLE_ID, OWNER_IDS, etc.) with
- *  your own IDs.  The ticket category is set to 1364388755091492955.
+ *  Remember to create the MySQL table (see the SQL you already ran) and
+ *  fill the .env file with the credentials shown above.
  ********************************************************************/
 
 require('dotenv').config();
@@ -31,15 +34,20 @@ const {
     PermissionOverwriteOptions,
 } = require('discord.js');
 
-const axios = require('axios');               // optional – only if you call a real API
-const crypto = require('crypto');             // built‑in, for local key generation
+const mysql = require('mysql2/promise');   // <-- MySQL driver
+const axios = require('axios');           // optional – only if you call a real API
+const crypto = require('crypto');         // built‑in, for local key generation
+const fs = require('fs');
+const path = require('path');
 
 /* --------------------------- CONFIG --------------------------- */
 const MOD_ROLE_ID   = '1398413061169352949';               // moderator role ID
-const OWNER_IDS     = ['YOUR_DISCORD_USER_ID'];           // bot owners
-const PANEL_ROLE_ID = '1405035087703183492';              // **new** – can use /panel
+const OWNER_IDS     = ['YOUR_DISCORD_USER_ID'];           // bot owners (replace)
+const PANEL_ROLE_ID = '1405035087703183492';              // can use /panel (and other commands)
 const TICKET_CAT_ID = '1364388755091492955';              // ticket category ID
-/* ------------------------------------------------------------ */
+
+// Path for the JSON fallback file (kept for backward compatibility)
+const SUBS_FILE = path.resolve(__dirname, 'subscriptions.json');
 
 /* --------------------------- CLIENT -------------------------- */
 const client = new Client({
@@ -54,25 +62,17 @@ const client = new Client({
 /* ------------------------------------------------------------ */
 
 /* ----------------------- PERMISSION HELP -------------------- */
-/**
- * General permission check used for most commands.
- * Returns true if the member is:
- *   • a bot owner
- *   • has the moderator role
- *   • has the special panel role (so they can also run /panel)
- */
 function hasPermission(member) {
     if (OWNER_IDS.includes(member.id)) return true;
     if (member.roles.cache.has(MOD_ROLE_ID)) return true;
-    if (member.roles.cache.has(PANEL_ROLE_ID)) return true; // <-- new line
+    if (member.roles.cache.has(PANEL_ROLE_ID)) return true; // new role
     return false;
 }
 
 /**
- * Specific check for the /panel command.
- * If you ever want the panel role to be *only* able to run /panel,
- * replace the call to `hasPermission` inside the /panel block
- * with this function.
+ * If you ever want the panel role to be the *only* way to use /panel,
+ * replace the generic permission check inside the /panel block with:
+ *   if (!canUsePanel(member)) …
  */
 function canUsePanel(member) {
     return OWNER_IDS.includes(member.id) ||
@@ -87,13 +87,111 @@ const subscriptions   = new Map();   // userId => { expires: Date, key: string }
 const temporaryLocks  = new Map();   // channelId => { unlockTime, moderator, reason }
 /* ------------------------------------------------------------ */
 
+/* ---------------------- MYSQL POOL ------------------------ */
+const db = await mysql.createPool({
+    host:     process.env.MYSQL_HOST,
+    port:     Number(process.env.MYSQL_PORT) || 3306,
+    user:     process.env.MYSQL_USER,
+    password: process.env.MYSQL_PASSWORD,
+    database: process.env.MYSQL_DATABASE,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    // If DreamHost forces TLS you can add:
+    // ssl: { rejectUnauthorized: true }
+});
+
+/* ---------------------- MYSQL HELPERS ---------------------- */
+/**
+ * Insert a new row or update an existing one.
+ * @param {string} discordId   Discord snowflake (as string)
+ * @param {string} key         Secret key for the user
+ * @param {Date}   expiresAt   Expiration date (UTC)
+ */
+async function upsertSubscription(discordId, key, expiresAt) {
+    const sql = `
+        INSERT INTO subscriptions (discord_id, \`key\`, expires_at)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            \`key\` = VALUES(\`key\`),
+            expires_at = VALUES(expires_at);
+    `;
+    await db.execute(sql, [discordId, key, expiresAt]);
+}
+
+/**
+ * Load *all* rows from the DB into the in‑memory map.
+ */
+async function loadSubscriptionsFromDB() {
+    const [rows] = await db.query('SELECT discord_id, `key`, expires_at FROM subscriptions');
+    for (const row of rows) {
+        subscriptions.set(String(row.discord_id), {
+            key: row.key,
+            expires: new Date(row.expires_at),
+        });
+    }
+    console.log(`✅ Loaded ${subscriptions.size} subscription(s) from MySQL`);
+}
+
+/**
+ * Delete a subscription row (used when it expires or you want to revoke it).
+ */
+async function deleteSubscription(discordId) {
+    await db.execute('DELETE FROM subscriptions WHERE discord_id = ?', [discordId]);
+    subscriptions.delete(discordId);
+}
+
+/* ---------------------- JSON FALLBACK HELPERS -------------- */
+/**
+ * Load subscriptions from the JSON file (fallback for older installs).
+ * Called only if you still want the JSON file as a backup.
+ */
+function loadSubscriptionsFromJSON() {
+    try {
+        if (fs.existsSync(SUBS_FILE)) {
+            const raw = fs.readFileSync(SUBS_FILE, 'utf8');
+            const obj = JSON.parse(raw);
+            for (const [userId, data] of Object.entries(obj)) {
+                subscriptions.set(userId, {
+                    key: data.key,
+                    expires: new Date(data.expires),
+                });
+            }
+            console.log(`✅ Loaded ${Object.keys(obj).length} subscription(s) from JSON fallback`);
+        }
+    } catch (e) {
+        console.error('Failed to load subscriptions from JSON:', e);
+    }
+}
+
+/**
+ * Write the whole subscription map to the JSON file (fallback).
+ * This is **not** required for MySQL persistence, but we keep it
+ * so the bot still works if the DB is temporarily unreachable.
+ */
+function saveSubscriptionsToJSON() {
+    try {
+        const obj = {};
+        for (const [userId, data] of subscriptions.entries()) {
+            obj[userId] = {
+                key: data.key,
+                expires: data.expires.toISOString(),
+            };
+        }
+        fs.writeFileSync(SUBS_FILE, JSON.stringify(obj, null, 2), 'utf8');
+        console.log('💾 Subscriptions saved to JSON fallback.');
+    } catch (e) {
+        console.error('Failed to save subscriptions to JSON:', e);
+    }
+}
+
 /* ---------------------- BACKEND HELPERS -------------------- */
 /**
  * Retrieve (or generate) a secret key for a user.
  * Replace this with a real API call if you have one.
  */
 async function fetchKeyFromBackend(userId) {
-    // Return already‑saved key if we have it
+    // If we already have a key in memory (or from DB) just return it
     if (subscriptions.has(userId) && subscriptions.get(userId).key) {
         return subscriptions.get(userId).key;
     }
@@ -113,8 +211,8 @@ async function fetchKeyFromBackend(userId) {
 }
 
 /**
- * Create or extend a subscription.
- * `days` = number of days to add (0 = remove/expire).
+ * Create or extend a subscription (in‑memory + JSON fallback).
+ * The MySQL version is handled by `/addsub`.
  */
 async function setSubscription(userId, days) {
     const now = Date.now();
@@ -124,6 +222,7 @@ async function setSubscription(userId, days) {
     const key = await fetchKeyFromBackend(userId);
 
     subscriptions.set(userId, { expires: newExpire, key });
+    saveSubscriptionsToJSON(); // keep JSON in sync (optional)
 
     // ---- OPTIONAL: sync with a real backend -----------------
     // try {
@@ -249,10 +348,10 @@ const commands = [
         .addStringOption(o => o.setName('message').setDescription('Announcement message').setRequired(true))
         .addChannelOption(o => o.setName('channel').setDescription('Channel to send announcement to').setRequired(false)),
 
-    // ── NEW: /subscription ──
+    // ── NEW: /subscription (in‑memory only) ──
     new SlashCommandBuilder()
         .setName('subscription')
-        .setDescription('Give or extend a subscription for a user')
+        .setDescription('Give or extend a subscription for a user (in‑memory + JSON)')
         .addUserOption(o => o.setName('user').setDescription('User to give a subscription to').setRequired(true))
         .addIntegerOption(o => o.setName('days')
             .setDescription('Number of days (positive to add, 0 to remove)')
@@ -275,6 +374,23 @@ const commands = [
         .setDescription('Show purchase info and open a ticket')
         .setDMPermission(false),
 
+    // ── NEW: /addsub (MySQL persistence) ──
+    new SlashCommandBuilder()
+        .setName('addsub')
+        .setDescription('Create or update a subscription for a user (stores in MySQL)')
+        .addUserOption(o => o.setName('user')
+            .setDescription('The Discord user to give a subscription to')
+            .setRequired(true))
+        .addIntegerOption(o => o.setName('days')
+            .setDescription('Number of days the subscription should last')
+            .setRequired(true)
+            .setMinValue(1))
+        .addStringOption(o => o.setName('key')
+            .setDescription('Secret key for the user (optional – will be generated if omitted)')
+            .setRequired(false))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles) // only mods/owners
+        .setDMPermission(false),
+
 ].map(c => c.toJSON());
 /* ------------------------------------------------------------ */
 
@@ -286,7 +402,17 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 client.once(Events.ClientReady, async () => {
     console.log(`Ready! Logged in as ${client.user.tag}`);
 
-    // Clear any temporary locks that survived a restart
+    // 1️⃣ Load subscriptions from MySQL (primary source)
+    try {
+        await loadSubscriptionsFromDB();
+    } catch (e) {
+        console.error('❌ Failed to load subscriptions from MySQL:', e);
+    }
+
+    // 2️⃣ (Optional) also load from JSON fallback – useful if the DB was down
+    loadSubscriptionsFromJSON();
+
+    // 3️⃣ Clear any temporary locks that survived a restart
     temporaryLocks.clear();
 
     try {
@@ -598,7 +724,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         /* =========================================================
-         *  2️⃣  NEW COMMAND: /subscription
+         *  2️⃣  NEW COMMAND: /subscription (in‑memory only)
          * ========================================================= */
         else if (commandName === 'subscription') {
             const targetUser = options.getUser('user');
@@ -625,12 +751,9 @@ client.on(Events.InteractionCreate, async interaction => {
          *  3️⃣  NEW COMMAND: /panel
          * ========================================================= */
         else if (commandName === 'panel') {
-            // If you want the panel role to be the *only* way to use /panel,
+            // If you ever want the panel role to be the *only* way to use /panel,
             // replace the generic permission check with:
             // if (!canUsePanel(member)) { … }
-            // For now we keep the generic check (hasPermission) which already
-            // includes the panel role.
-
             const targetUser = options.getUser('user') ?? member.user;
 
             // If a moderator tries to view someone else’s panel, they must have permission
@@ -708,7 +831,41 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         /* =========================================================
-         *  5️⃣  BUTTON INTERACTIONS
+         *  5️⃣  NEW COMMAND: /addsub  (MySQL persistence)
+         * ========================================================= */
+        else if (commandName === 'addsub') {
+            const targetUser = options.getUser('user');
+            const days = options.getInteger('days');
+            const providedKey = options.getString('key');
+
+            // Generate a key if the moderator didn’t supply one
+            const key = providedKey ?? await fetchKeyFromBackend(targetUser.id);
+            const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+            // 1️⃣ Update the in‑memory map (so /panel works instantly)
+            subscriptions.set(targetUser.id, { expires: expiresAt, key });
+
+            // 2️⃣ Persist to MySQL
+            try {
+                await upsertSubscription(targetUser.id, key, expiresAt);
+                await interaction.reply({
+                    content: `✅ Subscription for <@${targetUser.id}> set to **${days}** day(s).\n` +
+                             `**Expires:** <t:${Math.floor(expiresAt.getTime() / 1000)}:F>\n` +
+                             `**Key:** \`${key}\``,
+                    ephemeral: true,
+                });
+                console.log(`${member.user.tag} added/updated MySQL subscription for ${targetUser.id}`);
+            } catch (e) {
+                console.error('❌ MySQL upsert error:', e);
+                await interaction.reply({
+                    content: '❌ Failed to write the subscription to the database. Check the console for details.',
+                    ephemeral: true,
+                });
+            }
+        }
+
+        /* =========================================================
+         *  6️⃣  BUTTON INTERACTIONS
          * ========================================================= */
         else if (interaction.isButton()) {
             // ---------- SHOW KEY ----------
@@ -819,14 +976,24 @@ client.on(Events.InteractionCreate, async interaction => {
 /* ------------------------------------------------------------ */
 
 /* ------------------- CLEANUP OF EXPIRED SUBSCRIPTIONS ---------------- */
-setInterval(() => {
+setInterval(async () => {
     const now = Date.now();
     for (const [userId, data] of subscriptions.entries()) {
         if (data.expires.getTime() <= now) {
+            // Remove from in‑memory map
             subscriptions.delete(userId);
             console.log(`Removed expired subscription for ${userId}`);
+
+            // Also delete from MySQL
+            try {
+                await deleteSubscription(userId);
+                console.log(`✅ Deleted expired row for ${userId} from MySQL`);
+            } catch (e) {
+                console.error(`❌ Failed to delete expired row for ${userId}:`, e);
+            }
         }
     }
+    // (JSON fallback is automatically kept in sync by setSubscription / deleteSubscription)
 }, 10 * 60 * 1000); // every 10 minutes
 /* ------------------------------------------------------------ */
 
