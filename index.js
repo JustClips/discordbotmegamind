@@ -7,6 +7,9 @@
  *   • /panel       – private embed with subscription info + Show Key
  *   • /purchase    – embed with Create Ticket button → private ticket channel
  *
+ *  New: role 1405035087703183492 can now use /panel (and any other
+ *  command that passes the normal permission check).
+ *
  *  Replace the placeholder values (MOD_ROLE_ID, OWNER_IDS, etc.) with
  *  your own IDs.  The ticket category is set to 1364388755091492955.
  ********************************************************************/
@@ -34,6 +37,7 @@ const crypto = require('crypto');             // built‑in, for local key gener
 /* --------------------------- CONFIG --------------------------- */
 const MOD_ROLE_ID   = '1398413061169352949';               // moderator role ID
 const OWNER_IDS     = ['YOUR_DISCORD_USER_ID'];           // bot owners
+const PANEL_ROLE_ID = '1405035087703183492';              // **new** – can use /panel
 const TICKET_CAT_ID = '1364388755091492955';              // ticket category ID
 /* ------------------------------------------------------------ */
 
@@ -50,10 +54,30 @@ const client = new Client({
 /* ------------------------------------------------------------ */
 
 /* ----------------------- PERMISSION HELP -------------------- */
+/**
+ * General permission check used for most commands.
+ * Returns true if the member is:
+ *   • a bot owner
+ *   • has the moderator role
+ *   • has the special panel role (so they can also run /panel)
+ */
 function hasPermission(member) {
     if (OWNER_IDS.includes(member.id)) return true;
     if (member.roles.cache.has(MOD_ROLE_ID)) return true;
+    if (member.roles.cache.has(PANEL_ROLE_ID)) return true; // <-- new line
     return false;
+}
+
+/**
+ * Specific check for the /panel command.
+ * If you ever want the panel role to be *only* able to run /panel,
+ * replace the call to `hasPermission` inside the /panel block
+ * with this function.
+ */
+function canUsePanel(member) {
+    return OWNER_IDS.includes(member.id) ||
+           member.roles.cache.has(MOD_ROLE_ID) ||
+           member.roles.cache.has(PANEL_ROLE_ID);
 }
 /* ------------------------------------------------------------ */
 
@@ -288,7 +312,7 @@ client.on(Events.InteractionCreate, async interaction => {
     // ----- Permission check (for slash commands) -----
     if (interaction.isChatInputCommand() && !hasPermission(member)) {
         return await interaction.reply({
-            content: '❌ You don’t have permission to use this command! You need the Moderator role or be a bot owner.',
+            content: '❌ You don’t have permission to use this command! You need the Moderator role, the special panel role, or be a bot owner.',
             ephemeral: true,
         });
     }
@@ -601,6 +625,12 @@ client.on(Events.InteractionCreate, async interaction => {
          *  3️⃣  NEW COMMAND: /panel
          * ========================================================= */
         else if (commandName === 'panel') {
+            // If you want the panel role to be the *only* way to use /panel,
+            // replace the generic permission check with:
+            // if (!canUsePanel(member)) { … }
+            // For now we keep the generic check (hasPermission) which already
+            // includes the panel role.
+
             const targetUser = options.getUser('user') ?? member.user;
 
             // If a moderator tries to view someone else’s panel, they must have permission
@@ -741,7 +771,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     },
                 ];
 
-                // Give moderators access as well
+                // Give moderators (or the mod role) access as well
                 if (MOD_ROLE_ID) {
                     overwrites.push({
                         id: MOD_ROLE_ID,
