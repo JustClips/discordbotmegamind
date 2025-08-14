@@ -1,18 +1,12 @@
 require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { TranslationServiceClient } = require('@google-cloud/translate').v2;
+const translate = require('translate');
 
 // Configuration
 const MOD_ROLE_ID = '1398413061169352949';
 const OWNER_IDS = ['YOUR_DISCORD_USER_ID']; // Add your Discord user ID here
 const LOG_CHANNEL_ID = '1404675690007105596'; // Anti-bypass logging channel
 const MAX_STRIKES = 3; // Number of strikes before mute
-
-// Initialize Google Translate
-const translate = new TranslationServiceClient({
-  keyFilename: 'path/to/your/google-credentials.json', // Update this path
-  projectId: 'your-google-project-id' // Update this
-});
 
 // Create a new client instance
 const client = new Client({ 
@@ -1249,29 +1243,26 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// Language translation
+// Language translation (Free)
 client.on(Events.MessageCreate, async message => {
     // Ignore bot messages and commands
     if (message.author.bot) return;
     if (message.content.startsWith('/')) return;
 
     try {
-        // Detect language
-        const [detection] = await translate.detect(message.content);
-        const detectedLanguage = detection.language;
+        // Auto-detect language and translate to English
+        const translated = await translate(message.content, { to: 'en' });
         
-        // If not English, translate
-        if (detectedLanguage !== 'en') {
-            const [translation] = await translate.translate(message.content, 'en');
-            
+        // If translation happened (different from original)
+        if (translated && translated !== message.content) {
             // Reply with translation
             await message.reply({
-                content: `🔤 **Translation:**\n${translation}`,
+                content: `🔤 **Translation:**\n${translated}`,
                 allowedMentions: { repliedUser: false }
             });
         }
     } catch (error) {
-        // Ignore translation errors (unsupported languages, etc.)
+        // Ignore translation errors
         console.error('Translation error:', error);
     }
 });
