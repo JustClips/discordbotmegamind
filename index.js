@@ -1,10 +1,18 @@
 require('dotenv').config();
 const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { TranslationServiceClient } = require('@google-cloud/translate').v2;
 
 // Configuration
 const MOD_ROLE_ID = '1398413061169352949';
 const OWNER_IDS = ['YOUR_DISCORD_USER_ID']; // Add your Discord user ID here
 const LOG_CHANNEL_ID = '1404675690007105596'; // Anti-bypass logging channel
+const MAX_STRIKES = 3; // Number of strikes before mute
+
+// Initialize Google Translate
+const translate = new TranslationServiceClient({
+  keyFilename: 'path/to/your/google-credentials.json', // Update this path
+  projectId: 'your-google-project-id' // Update this
+});
 
 // Create a new client instance
 const client = new Client({ 
@@ -99,6 +107,28 @@ async function logBypassAttempt(message, type) {
     } catch (error) {
         console.error('Failed to log bypass attempt:', error);
     }
+}
+
+// Strike system
+const strikes = new Map(); // userId -> strike count
+
+function addStrike(userId, reason, moderatorId) {
+    if (!strikes.has(userId)) {
+        strikes.set(userId, 0);
+    }
+    
+    const currentStrikes = strikes.get(userId) + 1;
+    strikes.set(userId, currentStrikes);
+    
+    return currentStrikes;
+}
+
+function getStrikes(userId) {
+    return strikes.get(userId) || 0;
+}
+
+function resetStrikes(userId) {
+    strikes.delete(userId);
 }
 
 // Command definitions
@@ -292,7 +322,36 @@ const commands = [
         .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('Channel to host giveaway in')
-                .setRequired(false))
+                .setRequired(false)),
+
+    // Strike commands
+    new SlashCommandBuilder()
+        .setName('strike')
+        .setDescription('Add a strike to a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('User to strike')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('reason')
+                .setDescription('Reason for strike')
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('strikes')
+        .setDescription('Check strike count for a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('User to check strikes for')
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('resetstrikes')
+        .setDescription('Reset strikes for a user')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('User to reset strikes for')
+                .setRequired(true))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -428,7 +487,7 @@ client.on(Events.InteractionCreate, async interaction => {
             } catch (error) {
                 console.error('Unmute error:', error);
                 await interaction.reply({
-                    content: '❌ Failed to unmute the user. They might not be muted or I don\'t have permission.',
+                    content: '❌ Failed to unmute the user. They might not be muted or I don't have permission.',
                     ephemeral: true
                 });
             }
@@ -1061,6 +1120,70 @@ client.on(Events.InteractionCreate, async interaction => {
             }
         }
 
+        // Strike command
+        else if (commandName === 'strike') {
+            const user = options.getUser('user');
+            const reason = options.getString('reason');
+            
+            const targetMember = await interaction.guild.members.fetch(user.id);
+            
+            if (!targetMember) {
+                return await interaction.reply({
+                    content: '❌ User not found!',
+                    ephemeral: true
+                });
+            }
+
+            const strikeCount = addStrike(user.id, reason, member.user.id);
+            
+            let response = `⚠️ Strike #${strikeCount} added to <@${user.id}>.\n**Reason:** ${reason}\n**Moderator:** <@${member.user.id}>`;
+            
+            // Auto-mute if max strikes reached
+            if (strikeCount >= MAX_STRIKES) {
+                try {
+                    await targetMember.timeout(60 * 60 * 1000, `Max strikes reached (${strikeCount})`);
+                    response += `\n\n✅ User has been automatically muted for 1 hour due to reaching ${MAX_STRIKES} strikes.`;
+                    resetStrikes(user.id);
+                } catch (error) {
+                    console.error('Auto-mute error:', error);
+                    response += `\n\n❌ Failed to auto-mute user.`;
+                }
+            }
+
+            await interaction.reply({
+                content: response
+            });
+
+            // Send DM to user
+            try {
+                await user.send(`You have received a strike in ${interaction.guild.name}.\n**Reason:** ${reason}\n**Strike Count:** ${strikeCount}/${MAX_STRIKES}\n**Moderator:** <@${member.user.id}>`);
+            } catch (error) {
+                console.log('Could not send DM to user');
+            }
+        }
+
+        // Check strikes command
+        else if (commandName === 'strikes') {
+            const user = options.getUser('user');
+            const strikeCount = getStrikes(user.id);
+            
+            await interaction.reply({
+                content: `📊 <@${user.id}> has ${strikeCount}/${MAX_STRIKES} strikes.`,
+                ephemeral: true
+            });
+        }
+
+        // Reset strikes command
+        else if (commandName === 'resetstrikes') {
+            const user = options.getUser('user');
+            resetStrikes(user.id);
+            
+            await interaction.reply({
+                content: `✅ Strikes reset for <@${user.id}>.`,
+                ephemeral: true
+            });
+        }
+
     } catch (error) {
         console.error(error);
         if (!interaction.replied && !interaction.deferred) {
@@ -1123,6 +1246,33 @@ client.on(Events.MessageCreate, async message => {
         } catch (error) {
             console.error('Failed to handle bypass message:', error);
         }
+    }
+});
+
+// Language translation
+client.on(Events.MessageCreate, async message => {
+    // Ignore bot messages and commands
+    if (message.author.bot) return;
+    if (message.content.startsWith('/')) return;
+
+    try {
+        // Detect language
+        const [detection] = await translate.detect(message.content);
+        const detectedLanguage = detection.language;
+        
+        // If not English, translate
+        if (detectedLanguage !== 'en') {
+            const [translation] = await translate.translate(message.content, 'en');
+            
+            // Reply with translation
+            await message.reply({
+                content: `🔤 **Translation:**\n${translation}`,
+                allowedMentions: { repliedUser: false }
+            });
+        }
+    } catch (error) {
+        // Ignore translation errors (unsupported languages, etc.)
+        console.error('Translation error:', error);
     }
 });
 
