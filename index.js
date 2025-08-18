@@ -665,7 +665,7 @@ client.on(Events.InteractionCreate, async interaction => {
                         .setFooter({ text: `Ends at` })
                         .setTimestamp(endTime);
 
-                    await message.edit({ embeds: [updatedEmbed]);
+                    await message.edit({ embeds: [updatedEmbed] });
                 }, 5000); // Update every 5 seconds
 
                 await interaction.reply({ content: `✅ Giveaway created! Check <#${channel.id}> for details.`, ephemeral: true });
