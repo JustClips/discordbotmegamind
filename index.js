@@ -26,7 +26,6 @@ const client = new Client({
 const warnings = new Map();
 const userStrikes = new Map();
 const giveaways = new Map();
-const activeGiveaways = new Collection();
 const muteCooldowns = new Map(); // userId -> timestamp
 
 // Cooldown duration (1 minute)
@@ -81,7 +80,7 @@ function calculateWinChance(participants, winners) {
     return `${chance.toFixed(1)}%`;
 }
 
-async function logAction(guild, action, user, moderator, reason, duration = null) {
+async function logAction(guild, action, user, moderator, reason, duration = null, additionalInfo = null) {
     const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
     if (!logChannel) return;
 
@@ -91,16 +90,21 @@ async function logAction(guild, action, user, moderator, reason, duration = null
                   action === 'mute' ? '#FF0000' : 
                   action === 'kick' ? '#8B0000' : 
                   action === 'role' ? '#0000FF' : '#00FF00')
+        .setDescription(`${moderator.tag} (${moderator.id}) ${action}ed ${user.tag} (${user.id})`)
         .addFields(
             { name: 'Action', value: action.charAt(0).toUpperCase() + action.slice(1), inline: true },
-            { name: 'User', value: `<@${user.id}> (${user.tag})`, inline: true },
-            { name: 'Moderator', value: `<@${moderator.id}> (${moderator.tag})`, inline: true },
+            { name: 'Target', value: `<@${user.id}>`, inline: true },
+            { name: 'Moderator', value: `<@${moderator.id}>`, inline: true },
             { name: 'Reason', value: reason, inline: false }
         )
         .setTimestamp();
 
     if (duration) {
         embed.addFields({ name: 'Duration', value: formatTime(duration), inline: true });
+    }
+
+    if (additionalInfo) {
+        embed.addFields({ name: 'Details', value: additionalInfo, inline: false });
     }
 
     await logChannel.send({ embeds: [embed] });
@@ -112,7 +116,7 @@ function detectToSContent(content) {
     
     for (const pattern of BANNED_PATTERNS) {
         if (pattern.test(lowerContent)) {
-            return true;
+            return { detected: true, pattern: pattern.toString() };
         }
     }
     
@@ -135,11 +139,11 @@ function detectToSContent(content) {
             }
         }
         if (pattern.test(testContent)) {
-            return true;
+            return { detected: true, pattern: pattern.toString() };
         }
     }
     
-    return false;
+    return { detected: false, pattern: null };
 }
 
 // Command definitions
@@ -620,7 +624,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     const row = new ActionRowBuilder()
                         .addComponents(
                             new ButtonBuilder()
-                                .setCustomId('join_giveaway')
+                                .setCustomId(`join_giveaway_${Date.now()}`)
                                 .setLabel('🎉 Join Giveaway')
                                 .setStyle(ButtonStyle.Primary)
                         );
@@ -639,7 +643,6 @@ client.on(Events.InteractionCreate, async interaction => {
                     };
 
                     giveaways.set(message.id, giveawayData);
-                    activeGiveaways.set(message.id, giveawayData);
 
                     // Start the timer
                     const updateInterval = setInterval(async () => {
@@ -648,7 +651,6 @@ client.on(Events.InteractionCreate, async interaction => {
                         
                         if (timeLeft <= 0) {
                             clearInterval(updateInterval);
-                            activeGiveaways.delete(message.id);
                             
                             // End giveaway
                             const finalData = giveaways.get(message.id);
@@ -734,7 +736,7 @@ client.on(Events.InteractionCreate, async interaction => {
     
     // Handle button interactions
     else if (interaction.isButton()) {
-        if (interaction.customId === 'join_giveaway') {
+        if (interaction.customId.startsWith('join_giveaway')) {
             const giveawayData = giveaways.get(interaction.message.id);
             if (!giveawayData) {
                 return await interaction.reply({ content: '❌ This giveaway has ended or doesn\'t exist.', ephemeral: true });
@@ -758,11 +760,12 @@ client.on(Events.MessageCreate, async message => {
     if (message.content.length < 2) return;
     if (hasPermission(message.member)) return;
 
-    const detected = detectToSContent(message.content);
-    if (detected) {
+    const result = detectToSContent(message.content);
+    if (result.detected) {
         try {
+            const deletedContent = message.content;
             await message.delete();
-            await message.author.send(`❌ Your message was removed for violating Discord's Terms of Service.`);
+            await message.author.send(`❌ Your message was removed for violating Discord's Terms of Service.\n**Content:** ${deletedContent.substring(0, 1000)}`);
             
             // Add strike
             const strikes = userStrikes.get(message.author.id) || 0;
@@ -775,7 +778,7 @@ client.on(Events.MessageCreate, async message => {
                     if (targetMember && targetMember.moderatable) {
                         await targetMember.timeout(30 * 60 * 1000, '3 strikes - auto mute');
                         await message.channel.send(`🔇 <@${message.author.id}> has been auto-muted for 30 minutes.`);
-                        await logAction(message.guild, 'mute', message.author, client.user, 'Auto-mute after 3 strikes', 30 * 60);
+                        await logAction(message.guild, 'mute', message.author, client.user, 'Auto-mute after 3 strikes', 30 * 60, `Deleted content: ${deletedContent.substring(0, 500)}`);
                     }
                 } catch (error) {
                     console.error('Failed to auto-mute:', error);
@@ -785,7 +788,7 @@ client.on(Events.MessageCreate, async message => {
                 await message.channel.send(`⚠️ <@${message.author.id}> your message was removed. Strikes: ${strikes + 1}/3`);
             }
             
-            await logAction(message.guild, 'automod', message.author, client.user, 'ToS violation detected');
+            await logAction(message.guild, 'automod', message.author, client.user, 'ToS violation detected', null, `Deleted content: ${deletedContent.substring(0, 500)}`);
         } catch (error) {
             console.error('AutoMod error:', error);
         }
@@ -808,7 +811,7 @@ client.on(Events.GuildMemberAdd, async member => {
     if (logChannel) {
         const embed = new EmbedBuilder()
             .setTitle('📥 Member Joined')
-            .setDescription(`<@${member.user.id}> (${member.user.tag})`)
+            .setDescription(`${member.user.tag} (${member.user.id})`)
             .addFields(
                 { name: 'Account Created', value: member.user.createdAt.toDateString(), inline: true }
             )
@@ -824,7 +827,7 @@ client.on(Events.GuildMemberRemove, async member => {
     if (logChannel) {
         const embed = new EmbedBuilder()
             .setTitle('📤 Member Left')
-            .setDescription(`<@${member.user.id}> (${member.user.tag})`)
+            .setDescription(`${member.user.tag} (${member.user.id})`)
             .setColor('#FF0000')
             .setTimestamp();
         await logChannel.send({ embeds: [embed] });
@@ -839,7 +842,7 @@ client.on(Events.MessageDelete, async message => {
     if (logChannel && message.content) {
         const embed = new EmbedBuilder()
             .setTitle('🗑️ Message Deleted')
-            .setDescription(`**Channel:** <#${message.channel.id}>\n**Author:** <@${message.author.id}> (${message.author.tag})\n**Content:** ${message.content}`)
+            .setDescription(`**Channel:** <#${message.channel.id}>\n**Author:** ${message.author.tag} (${message.author.id})\n**Content:** ${message.content.substring(0, 1000)}`)
             .setColor('#FFA500')
             .setTimestamp();
         await logChannel.send({ embeds: [embed] });
@@ -854,7 +857,7 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
     if (logChannel) {
         const embed = new EmbedBuilder()
             .setTitle('✏️ Message Edited')
-            .setDescription(`**Channel:** <#${newMessage.channel.id}>\n**Author:** <@${newMessage.author.id}> (${newMessage.author.tag})\n**Before:** ${oldMessage.content}\n**After:** ${newMessage.content}`)
+            .setDescription(`**Channel:** <#${newMessage.channel.id}>\n**Author:** ${newMessage.author.tag} (${newMessage.author.id})\n**Before:** ${oldMessage.content.substring(0, 500)}\n**After:** ${newMessage.content.substring(0, 500)}`)
             .setColor('#0000FF')
             .setTimestamp();
         await logChannel.send({ embeds: [embed] });
