@@ -5,7 +5,7 @@ const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, Pe
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',').map(id => id.trim()) : [];
 const LOG_CHANNEL_ID = '1404675690007105596';
-const WELCOME_CHANNEL_ID = '1364387827386683484';
+const WELCOME_CHANNEL_ID = '1364387827386683484';2232323232
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || 'YOUR_TICKET_CATEGORY_ID';
 const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKET_LOGS_CHANNEL_ID';
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORdT_ROLE_ID';
