@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection, ChannelType, TextInputStyle, ModalBuilder, TextInputBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection, ChannelType, TextInputStyle, ModalBuilder, TextInputBuilder } = require('discord.js');
 
 // Configuration
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
@@ -268,7 +268,7 @@ async function sendPremiumAd(interaction) {
       embeds: [embed],
       components: [row]
     });
-  } else if (interaction.send) {
+  } else {
     await interaction.send({
       content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
       embeds: [embed],
@@ -432,6 +432,7 @@ client.once(Events.ClientReady, async () => {
 console.log(`🚀 Ready! Logged in as ${client.user.tag}`);
 
 try {
+    console.log('Registering commands...');
     await rest.put(
         Routes.applicationCommands(client.user.id),
         { body: commands }
@@ -439,105 +440,57 @@ try {
     console.log('✅ Successfully registered application commands.');
     
     // Send premium ad to premium channel automatically when bot starts
+    console.log('Setting up premium advertisement...');
     setTimeout(async () => {
       try {
+        console.log('Attempting to send premium ad to channel:', PREMIUM_CHANNEL_ID);
         const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
         if (premiumChannel) {
-          // Check if ad already exists
-          try {
-            const messages = await premiumChannel.messages.fetch({ limit: 10 });
-            const existingAd = messages.find(msg => 
-              msg.embeds.length > 0 && 
-              msg.embeds[0].title === '💎 Epsillon Hub Premium' &&
-              msg.author.id === client.user.id
+          console.log('Found premium channel, sending advertisement...');
+          
+          // Create embed
+          const embed = new EmbedBuilder()
+            .setTitle('💎 Epsillon Hub Premium')
+            .setDescription('')
+            .setColor('#FFD700')
+            .addFields(
+              {
+                name: '💰 Price',
+                value: '$10 One-Time Payment\nLifetime Access',
+                inline: true
+              },
+              {
+                name: '🔒 Security',
+                value: 'Lifetime Updates & Support',
+                inline: true
+              }
+            )
+            .setFooter({ text: 'Premium Quality Solution' })
+            .setTimestamp();
+
+          // Create button
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('purchase_premium')
+                .setLabel('Purchase Now')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('💳')
             );
 
-            if (!existingAd) {
-              // Create embed
-              const embed = new EmbedBuilder()
-                .setTitle('💎 Epsillon Hub Premium')
-                .setDescription('')
-                .setColor('#FFD700')
-                .addFields(
-                  {
-                    name: '💰 Price',
-                    value: '$10 One-Time Payment\nLifetime Access',
-                    inline: true
-                  },
-                  {
-                    name: '🔒 Security',
-                    value: 'Lifetime Updates & Support',
-                    inline: true
-                  }
-                )
-                .setFooter({ text: 'Premium Quality Solution' })
-                .setTimestamp();
-
-              // Create button
-              const row = new ActionRowBuilder()
-                .addComponents(
-                  new ButtonBuilder()
-                    .setCustomId('purchase_premium')
-                    .setLabel('Purchase Now')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('💳')
-                );
-
-              await premiumChannel.send({
-                content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
-                embeds: [embed],
-                components: [row]
-              });
-              console.log('✅ Premium advertisement sent to premium channel');
-            } else {
-              console.log('✅ Premium advertisement already exists in premium channel');
-            }
-          } catch (fetchError) {
-            console.log('⚠️ Could not fetch messages, sending new premium ad anyway');
-            // Create embed
-            const embed = new EmbedBuilder()
-              .setTitle('💎 Epsillon Hub Premium')
-              .setDescription('')
-              .setColor('#FFD700')
-              .addFields(
-                {
-                  name: '💰 Price',
-                  value: '$10 One-Time Payment\nLifetime Access',
-                  inline: true
-                },
-                {
-                  name: '🔒 Security',
-                  value: 'Lifetime Updates & Support',
-                  inline: true
-                }
-              )
-              .setFooter({ text: 'Premium Quality Solution' })
-              .setTimestamp();
-
-            // Create button
-            const row = new ActionRowBuilder()
-              .addComponents(
-                new ButtonBuilder()
-                  .setCustomId('purchase_premium')
-                  .setLabel('Purchase Now')
-                  .setStyle(ButtonStyle.Success)
-                  .setEmoji('💳')
-              );
-
-            await premiumChannel.send({
-              content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
-              embeds: [embed],
-              components: [row]
-            });
-            console.log('✅ Premium advertisement sent to premium channel');
-          }
+          await premiumChannel.send({
+            content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
+            embeds: [embed],
+            components: [row]
+          });
+          console.log('✅ Premium advertisement sent to premium channel');
         } else {
           console.log('❌ Premium channel not found');
         }
       } catch (error) {
         console.error('❌ Failed to send premium ad:', error);
       }
-    }, 5000); // Wait 5 seconds after bot is ready
+    }, 3000); // Wait 3 seconds after bot is ready
     
 } catch (error) {
     console.error('❌ Failed to register commands:', error);
