@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection, ChannelType, TextInputStyle, ModalBuilder, TextInputBuilder, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
+const { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection, ChannelType, TextInputStyle, ModalBuilder, TextInputBuilder, StringSelectMenuBuilder } = require('discord.js');
 
 // Configuration
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
@@ -9,8 +9,6 @@ const WELCOME_CHANNEL_ID = '1364387827386683484';
 const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || 'YOUR_TICKET_CATEGORY_ID';
 const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKET_LOGS_CHANNEL_ID';
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
-const PREMIUM_CHANNEL_ID = '1403870367524585482';
-const PREMIUM_PRICE = 10; // USD
 
 // Create new client instance
 const client = new Client({
@@ -229,57 +227,6 @@ async function sendTranscript(interaction, ticketData) {
   });
 }
 
-// Premium advertisement function
-async function sendPremiumAd(interaction) {
-  if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id)) {
-    return await interaction.reply({
-      content: '❌ This command can only be used in the premium channel!',
-      ephemeral: true
-    });
-  }
-
-  // Create embed
-  const embed = new EmbedBuilder()
-    .setTitle('💎 Epsillon Hub Premium')
-    .setDescription('**The Ultimate Discord Bot Solution**\n\n*Elevate your server with our premium features*')
-    .setColor('#FFD700')
-    .addFields(
-      {
-        name: '💰 Investment',
-        value: `$${PREMIUM_PRICE} One-Time Payment\nLifetime Access`,
-        inline: true
-      },
-      {
-        name: '🔒 Security',
-        value: 'Lifetime Updates & Support',
-        inline: true
-      },
-      {
-        name: '⚡ Performance',
-        value: '99.9% Uptime Guarantee',
-        inline: true
-      }
-    )
-    .setFooter({ text: 'Trusted by 1000+ Servers | Premium Quality' })
-    .setTimestamp();
-
-  // Create button
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('purchase_premium')
-        .setLabel('Purchase Now')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('💳')
-    );
-
-  await interaction.reply({
-    content: '🔥 **Introducing Epsillon Hub Premium!** 🔥',
-    embeds: [embed],
-    components: [row]
-  });
-}
-
 // Command definitions
 const commands = [
 new SlashCommandBuilder()
@@ -422,12 +369,7 @@ new SlashCommandBuilder()
     .addSubcommand(subcommand =>
       subcommand
         .setName('transcript')
-        .setDescription('Get ticket transcript')),
-
-new SlashCommandBuilder()
-    .setName('premium')
-    .setDescription('Display premium script advertisement')
-    .toJSON()
+        .setDescription('Get ticket transcript'))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -472,32 +414,6 @@ try {
         await welcomeChannel.send({ embeds: [panelEmbed], components: [row] });
         console.log('✅ Ticket panel created');
       }
-    }
-    
-    // Send premium ad to premium channel
-    try {
-      const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
-      if (premiumChannel) {
-        // Check if ad already exists
-        const messages = await premiumChannel.messages.fetch({ limit: 5 });
-        const existingAd = messages.find(msg => 
-          msg.embeds.length > 0 && 
-          msg.embeds[0].title === '💎 Epsillon Hub Premium' &&
-          msg.author.id === client.user.id
-        );
-
-        if (!existingAd) {
-          await sendPremiumAd({ 
-            channel: premiumChannel, 
-            reply: async (response) => {
-              await premiumChannel.send(response);
-            }
-          });
-          console.log('✅ Premium advertisement sent');
-        }
-      }
-    } catch (error) {
-      console.error('❌ Failed to send premium ad:', error);
     }
 } catch (error) {
     console.error('❌ Failed to register commands:', error);
@@ -1070,10 +986,6 @@ const { commandName, options, member, channel, guild } = interaction;
                 break;
             }
         }
-        
-        else if (commandName === 'premium') {
-            await sendPremiumAd(interaction);
-        }
 
     } catch (error) {
         console.error('Command error:', error);
@@ -1131,13 +1043,6 @@ else if (interaction.isButton()) {
         giveaways.set(interaction.message.id, giveawayData);
 
         await interaction.reply({ content: '🎉 You have successfully joined the giveaway!', ephemeral: true });
-    }
-    
-    if (interaction.customId === 'purchase_premium') {
-        await interaction.reply({
-            content: '💳 **Purchase Link:** https://your-payment-link.com\n\n*Please contact support after purchase with your transaction ID*',
-            ephemeral: true
-        });
     }
     
     const ticketData = tickets.get(interaction.channel.id);
