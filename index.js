@@ -232,6 +232,7 @@ async function sendTranscript(interaction, ticketData) {
 
 // Premium advertisement function
 async function sendPremiumAd(interaction) {
+  // Allow owners to use this command anywhere, but restrict others to premium channel
   if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id)) {
     return await interaction.reply({
       content: '❌ This command can only be used in the premium channel!',
@@ -437,7 +438,7 @@ try {
     );
     console.log('✅ Successfully registered application commands.');
     
-    // Send premium ad to premium channel (without welcome channel ticket panel)
+    // Send premium ad to premium channel automatically when bot starts
     try {
       const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
       if (premiumChannel) {
@@ -450,13 +451,44 @@ try {
         );
 
         if (!existingAd) {
-          await sendPremiumAd({ 
-            channel: premiumChannel, 
-            reply: async (response) => {
-              await premiumChannel.send(response);
-            }
+          // Create embed
+          const embed = new EmbedBuilder()
+            .setTitle('💎 Epsillon Hub Premium')
+            .setDescription('')
+            .setColor('#FFD700')
+            .addFields(
+              {
+                name: '💰 Price',
+                value: '$10 One-Time Payment\nLifetime Access',
+                inline: true
+              },
+              {
+                name: '🔒 Security',
+                value: 'Lifetime Updates & Support',
+                inline: true
+              }
+            )
+            .setFooter({ text: 'Premium Quality Solution' })
+            .setTimestamp();
+
+          // Create button
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('purchase_premium')
+                .setLabel('Purchase Now')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('💳')
+            );
+
+          await premiumChannel.send({
+            content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
+            embeds: [embed],
+            components: [row]
           });
-          console.log('✅ Premium advertisement sent');
+          console.log('✅ Premium advertisement sent to premium channel');
+        } else {
+          console.log('✅ Premium advertisement already exists in premium channel');
         }
       }
     } catch (error) {
