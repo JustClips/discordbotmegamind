@@ -427,7 +427,6 @@ new SlashCommandBuilder()
 new SlashCommandBuilder()
     .setName('premium')
     .setDescription('Display premium script advertisement')
-    .toJSON()
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
