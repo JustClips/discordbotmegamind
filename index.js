@@ -242,12 +242,12 @@ async function sendPremiumAd(interaction) {
   // Create embed
   const embed = new EmbedBuilder()
     .setTitle('💎 Epsillon Hub Premium')
-    .setDescription('**The Ultimate Discord Bot Solution**')
+    .setDescription('')
     .setColor('#FFD700')
     .addFields(
       {
         name: '💰 Price',
-        value: `$${PREMIUM_PRICE} One-Time Payment\nLifetime Access`,
+        value: '$10 One-Time Payment\nLifetime Access',
         inline: true
       },
       {
@@ -270,7 +270,7 @@ async function sendPremiumAd(interaction) {
     );
 
   await interaction.reply({
-    content: '🔥 **Introducing Epsillon Hub Premium!** 🔥',
+    content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
     embeds: [embed],
     components: [row]
   });
@@ -437,39 +437,7 @@ try {
     );
     console.log('✅ Successfully registered application commands.');
     
-    // Create ticket panel in welcome channel
-    const welcomeChannel = client.channels.cache.get(WELCOME_CHANNEL_ID);
-    if (welcomeChannel) {
-      const panelEmbed = new EmbedBuilder()
-        .setTitle('🎫 Support Ticket')
-        .setDescription('Need help? Click the button below to create a support ticket!')
-        .setColor('#0099ff')
-        .setFooter({ text: 'Support Team' });
-
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('create_ticket')
-            .setLabel('Create Ticket')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('🎫')
-        );
-
-      // Check if panel already exists
-      const messages = await welcomeChannel.messages.fetch({ limit: 5 });
-      const existingPanel = messages.find(msg => 
-        msg.embeds.length > 0 && 
-        msg.embeds[0].title === '🎫 Support Ticket' &&
-        msg.author.id === client.user.id
-      );
-
-      if (!existingPanel) {
-        await welcomeChannel.send({ embeds: [panelEmbed], components: [row] });
-        console.log('✅ Ticket panel created');
-      }
-    }
-    
-    // Send premium ad to premium channel
+    // Send premium ad to premium channel (without welcome channel ticket panel)
     try {
       const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
       if (premiumChannel) {
