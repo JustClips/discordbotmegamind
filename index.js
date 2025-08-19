@@ -10,6 +10,7 @@ const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || 'YOUR_TICKET_CATEGO
 const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKET_LOGS_CHANNEL_ID';
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
 const PREMIUM_CHANNEL_ID = '1403870367524585482';
+const PREMIUM_CATEGORY_ID = '1407184066205319189';
 const PREMIUM_PRICE = 10; // USD
 
 // Create new client instance
@@ -241,11 +242,11 @@ async function sendPremiumAd(interaction) {
   // Create embed
   const embed = new EmbedBuilder()
     .setTitle('💎 Epsillon Hub Premium')
-    .setDescription('**The Ultimate Discord Bot Solution**\n\n*Elevate your server with our premium features*')
+    .setDescription('**The Ultimate Discord Bot Solution**')
     .setColor('#FFD700')
     .addFields(
       {
-        name: '💰 Investment',
+        name: '💰 Price',
         value: `$${PREMIUM_PRICE} One-Time Payment\nLifetime Access`,
         inline: true
       },
@@ -253,14 +254,9 @@ async function sendPremiumAd(interaction) {
         name: '🔒 Security',
         value: 'Lifetime Updates & Support',
         inline: true
-      },
-      {
-        name: '⚡ Performance',
-        value: '99.9% Uptime Guarantee',
-        inline: true
       }
     )
-    .setFooter({ text: 'Trusted by 1000+ Servers | Premium Quality' })
+    .setFooter({ text: 'Premium Quality Solution' })
     .setTimestamp();
 
   // Create button
@@ -1133,10 +1129,134 @@ else if (interaction.isButton()) {
     }
     
     if (interaction.customId === 'purchase_premium') {
-        await interaction.reply({
-            content: '💳 **Purchase Link:** https://your-payment-link.com\n\n*Please contact support after purchase with your transaction ID*',
-            ephemeral: true
-        });
+        try {
+            const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
+            if (!category) {
+                return await interaction.reply({
+                    content: '❌ Purchase category not found. Please contact an administrator.',
+                    ephemeral: true
+                });
+            }
+
+            // Create purchase ticket channel
+            const ticketChannel = await interaction.guild.channels.create({
+                name: `lifetime-purchase-${interaction.user.username}`,
+                type: ChannelType.GuildText,
+                parent: category.id,
+                topic: `Lifetime purchase request from ${interaction.user.tag}`,
+                permissionOverwrites: [
+                    {
+                        id: interaction.guild.id,
+                        deny: [PermissionFlagsBits.ViewChannel]
+                    },
+                    {
+                        id: interaction.user.id,
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.ReadMessageHistory
+                        ]
+                    },
+                    ...OWNER_IDS.map(id => ({
+                        id: id,
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.ReadMessageHistory
+                        ]
+                    })),
+                    {
+                        id: client.user.id,
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.ReadMessageHistory,
+                            PermissionFlagsBits.ManageChannels
+                        ]
+                    }
+                ]
+            });
+
+            // Create ticket control panel
+            const panelEmbed = new EmbedBuilder()
+                .setTitle('🛒 Purchase Ticket')
+                .setDescription('This is your private purchase ticket. Our team will assist you shortly.')
+                .setColor('#0099ff');
+
+            const panelRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('close_purchase_ticket')
+                        .setLabel('Close Ticket')
+                        .setStyle(ButtonStyle.Danger)
+                        .setEmoji('🔒')
+                );
+
+            await ticketChannel.send({
+                content: `<@${interaction.user.id}> ${OWNER_IDS.map(id => `<@${id}>`).join(' ')}`,
+                embeds: [panelEmbed],
+                components: [panelRow]
+            });
+
+            // Send purchase information
+            const purchaseEmbed = new EmbedBuilder()
+                .setTitle('💎 Epsillon Hub Premium Purchase')
+                .setDescription(`Thank you for your interest in Epsillon Hub Premium!\n\n**Price:** $${PREMIUM_PRICE} (Lifetime Access)\n\n**Supported Payment Methods:**\n• CashApp\n• Cryptocurrency\n• Gift Cards\n\nOur team will contact you shortly to process your purchase.`)
+                .setColor('#FFD700')
+                .setTimestamp();
+
+            await ticketChannel.send({ embeds: [purchaseEmbed] });
+
+            // Store ticket data
+            tickets.set(ticketChannel.id, {
+                userId: interaction.user.id,
+                channelId: ticketChannel.id,
+                status: 'open',
+                timestamp: Date.now(),
+                claimedBy: null
+            });
+
+            // Initialize transcript
+            ticketTranscripts.set(ticketChannel.id, []);
+
+            await interaction.reply({
+                content: `✅ Purchase ticket created! <#${ticketChannel.id}>`,
+                ephemeral: true
+            });
+
+            // Log ticket creation
+            const logChannel = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
+            if (logChannel) {
+                const logEmbed = new EmbedBuilder()
+                    .setTitle('🛒 Premium Purchase Ticket Created')
+                    .addFields(
+                        { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+                        { name: 'Channel', value: `<#${ticketChannel.id}>`, inline: true },
+                        { name: 'Price', value: `$${PREMIUM_PRICE} Lifetime`, inline: true }
+                    )
+                    .setColor('#FFD700')
+                    .setTimestamp();
+                await logChannel.send({ embeds: [logEmbed] });
+            }
+        } catch (error) {
+            console.error('Purchase ticket creation error:', error);
+            await interaction.reply({
+                content: '❌ Failed to create purchase ticket. Please try again.',
+                ephemeral: true
+            });
+        }
+    }
+    
+    if (interaction.customId === 'close_purchase_ticket') {
+        const ticketData = tickets.get(interaction.channel.id);
+        if (!ticketData) {
+            return await interaction.reply({
+                content: '❌ This is not a valid ticket channel!',
+                ephemeral: true
+            });
+        }
+
+        await closeTicket(interaction, ticketData);
     }
     
     const ticketData = tickets.get(interaction.channel.id);
