@@ -18,6 +18,9 @@ const {
   StringSelectMenuBuilder
 } = require('discord.js');
 
+/* -------------------------------------------------
+   CONFIGURATION
+   ------------------------------------------------- */
 const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',').map(id => id.trim()) : [];
 const LOG_CHANNEL_ID = '1404675690007105596';
@@ -29,6 +32,14 @@ const PREMIUM_CHANNEL_ID = '1403870367524585482';
 const PREMIUM_CATEGORY_ID = '1407184066205319189';
 const PREMIUM_PRICE = 10;
 
+/* NEW CONSTANTS ------------------------------------------------- */
+const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
+const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;   // role that gets pinged on a new media‑partner application
+
+/* -------------------------------------------------
+   CLIENT & GLOBAL MAPS
+   ------------------------------------------------- */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -52,6 +63,9 @@ const ticketTranscripts = new Map();
 
 const MUTE_COOLDOWN = 60000;
 
+/* -------------------------------------------------
+   BANNED WORD PATTERNS (profanity / TOS)
+   ------------------------------------------------- */
 const BANNED_PATTERNS = [
   /(?:n[i1!|]gg[ae3r]?)|(?:f[a4@]gg[o0]t?)|(?:ch[i1!|]nk?)|(?:k[i1!|]ke?)|(?:r[e3]t[a4@]rd?)|(?:c[o0]ck)|(?:p[e3]n[i1!|]s)|(?:v[a4@]g[i1!|]n[a4@])|(?:wh[o0]r[e3])|(?:sl[uo0]t)|(?:b[i1!|]tch)|(?:c[uo0]nt)|(?:sh[i1!|]t)|(?:f[uo0]ck)|(?:d[i1!|]ck)|(?:p[o0]rn)|(?:s[e3]x)|(?:n[a4@]ked)|(?:b[o0][o0]bs?)|(?:t[i1!|]ts?)|(?:p[uo0]ssy)|(?:cum)|(?:j[i1!|]zz)|(?:orgy)|(?:g[a4@]ngb[a4@]ng)|(?:p[e3]d[o0])|(?:b[e3][a4@]st[i1!|]al[i1!|]ty)|(?:z[o0][o0]ph[i1!|]l[i1!|]a)|(?:l[o0][o0]t[a4@])|(?:r[a4@]p[e3])|(?:m[o0]l[e3]st[e3])|(?:p[e3]d[e3][s5])|(?:s[a4@]d[i1!|]sm)|(?:m[a4@]st[e3]rb[a4@]t[e3])|(?:b[e3][a4@]n[a4@]n[a4@])|(?:w[a4@]nker)|(?:w[a4@]nk[e3]r)|(?:b[o0][o0]ger)|(?:t[uo0]rd)|(?:sc[uo0]t)|(?:tw[a4@]t)|(?:n[a4@]z[i1!|])|(?:sp[i1!|]c)|(?:g[o0][o0]k)|(?:g[e3]rm[a4@]n)|(?:j[e3]w)|(?:h[o0][o0]k[e3]r)|(?:r[a4@]c[i1!|]st)|(?:n[a4@]z[i1!|])|(?:f[a4@]sc[i1!|]st)|(?:tr[a4@]nn[yi])|(?:dyk[e3])|(?:tr[a4@]ny)|(?:s[h]{2}[i1!|]t[e3])|(?:f[uo0][ck]{2})|(?:b[i1!|]tch[e3]s)|(?:c[o0]cks[uo0]ck[e3]r)|(?:m[o0]th[e3]rf[uo0]ck[e3]r)|(?:f[a4@]gg[o0]t[s5])|(?:n[i1!|]gg[e3]r[s5])|(?:r[e3]t[a4@]rd[e3]d)|(?:c[o0]cks[uo0]ck[i1!|]ng)|(?:m[o0]th[e3]rf[uo0]ck[i1!|]ng)|(?:f[uo0]ck[i1!|]ng)|(?:sh[i1!|]tt[i1!|]ng)|(?:b[i1!|]tch[i1!|]ng)|(?:c[uo0]nt[i1!|]ng)|(?:n[i1!|]gg[e3]r[i1!|]ng)|(?:f[a4@]gg[o0]t[i1!|]ng)|(?:r[e3]t[a4@]rd[i1!|]ng)/gi,
   /(?:discord\.gg\/[a-zA-Z0-9]+)|(?:bit\.ly\/[a-zA-Z0-9]+)|(?:tinyurl\.com\/[a-zA-Z0-9]+)/gi,
@@ -59,6 +73,9 @@ const BANNED_PATTERNS = [
   /(?:h[e3]il hitl[e3]r)|(?:nazi)|(?:swastika)|(?:kkk)|(?:white pow[e3]r)|(?:rac[e3] war)|(?:genocid[e3])|(?:ethnic cl[e3]ansing)/gi
 ];
 
+/* -------------------------------------------------
+   HELPER FUNCTIONS
+   ------------------------------------------------- */
 function hasPermission(member) {
   if (OWNER_IDS.includes(member.id)) return true;
   if (member.roles.cache.has(MOD_ROLE_ID)) return true;
@@ -96,6 +113,9 @@ function calculateWinChance(participants, winners) {
   return `${((winners / participants) * 100).toFixed(1)}%`;
 }
 
+/* -------------------------------------------------
+   LOGGING
+   ------------------------------------------------- */
 async function logAction(guild, action, user, moderator, reason, duration = null, additionalInfo = null) {
   const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
   if (!logChannel) return;
@@ -125,19 +145,79 @@ async function logAction(guild, action, user, moderator, reason, duration = null
   await logChannel.send({ embeds: [embed] });
 }
 
+/* NEW – log phishing / scam attempts */
+async function logPhishing(guild, user, message, pattern) {
+  const channel = guild.channels.cache.get(PHISHING_LOG_CHANNEL_ID);
+  if (!channel) return;
+  const embed = new EmbedBuilder()
+    .setTitle('⚠️ Phishing / Scam Detected')
+    .setColor('#FF4500')
+    .addFields(
+      { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
+      { name: 'Message', value: message.length > 1024 ? `${message.slice(0, 1020)}…` : message, inline: false },
+      { name: 'Pattern', value: pattern, inline: false }
+    )
+    .setTimestamp();
+  await channel.send({ embeds: [embed] });
+}
+
+/* -------------------------------------------------
+   AUTOMOD – TOC / PHISHING DETECTION
+   ------------------------------------------------- */
 function detectToSContent(content) {
   const lower = content.toLowerCase();
-  for (const pattern of BANNED_PATTERNS) if (pattern.test(lower)) return { detected: true, pattern: pattern.toString() };
-  const subs = { a: ['4', '@'], e: ['3'], i: ['1', '!'], o: ['0'], s: ['5', '$'], t: ['7'], u: ['v'] };
+
+  // ---- 1️⃣  PROFANITY / TOS WORDS (original list) ----
   for (const pattern of BANNED_PATTERNS) {
-    let test = lower;
-    for (const [orig, repl] of Object.entries(subs))
-      for (const r of repl) test = test.replace(new RegExp(r, 'g'), orig);
-    if (pattern.test(test)) return { detected: true, pattern: pattern.toString() };
+    if (pattern.test(lower)) return { detected: true, pattern: pattern.toString() };
   }
+
+  // ---- 2️⃣  URL EXTRACTION ----
+  const urlRegex = /https?:\/\/[^\s]+/gi;
+  const urls = content.match(urlRegex) ?? [];
+
+  // ---- 3️⃣  PHISHING / SCAM PATTERNS ----
+  const PHISH_PATTERNS = [
+    /discord(?:app)?\.com\/(?:invite|gifts?)\/[a-z0-9-]+/i,
+    /(?:bit\.ly|tinyurl\.com|goo\.gl|t\.co|ow\.ly|is\.gd|buff\.ly)\/[^\s]+/i,
+    /free\s*nitro|free\s*discord\s*gift|nitro\s*gift/i,
+    /paypal\.me\/[^\s]+|paypal\.com\/[^\s]*gift|giftcard\.com|giftcards\.com|gift\.co\/[^\s]+/i,
+    /steamcommunity\.com\/tradeoffer\/[^\s]+|steamgifts\.com|g2a\.com\/[^\s]+/i,
+    /(?:gift|code|voucher)[\s-]?(?:free|promo|claim)[\s-]?(?:discord|nitro|steam|paypal)/i,
+    /login\.?[\w-]*\.(?:com|net|org)\/[^\s]*\b(verify|account|security)\b/i,
+    /click\.?[\w-]*\.(?:com|net|org)\/[^\s]+/i,
+  ];
+
+  for (const pattern of PHISH_PATTERNS) {
+    if (pattern.test(lower)) return { detected: true, pattern: pattern.toString() };
+  }
+
+  // ---- 4️⃣  SHORTENER QUICK DETECTION ----
+  const shortenerMap = {
+    'bit.ly': true,
+    'tinyurl.com': true,
+    'goo.gl': true,
+    't.co': true,
+    'ow.ly': true,
+    'is.gd': true,
+    'buff.ly': true,
+  };
+  for (const url of urls) {
+    try {
+      const hostname = new URL(url).hostname.replace('www.', '');
+      if (shortenerMap[hostname]) {
+        return { detected: true, pattern: `shortener:${hostname}` };
+      }
+    } catch (_) {}
+  }
+
+  // ---- 5️⃣  NO PROBLEM FOUND ----
   return { detected: false, pattern: null };
 }
 
+/* -------------------------------------------------
+   TICKET HELPERS
+   ------------------------------------------------- */
 async function closeTicket(interaction, ticketData) {
   if (ticketData.status === 'closed')
     return interaction.reply({ content: '❌ This ticket is already closed!', ephemeral: true });
@@ -187,6 +267,9 @@ async function sendTranscript(interaction, ticketData) {
   });
 }
 
+/* -------------------------------------------------
+   PREMIUM AD (unchanged – kept for reference)
+   ------------------------------------------------- */
 async function sendPremiumAd(interaction) {
   if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id))
     return interaction.reply({ content: '❌ This command can only be used in the premium channel!', ephemeral: true });
@@ -213,7 +296,11 @@ async function sendPremiumAd(interaction) {
   });
 }
 
+/* -------------------------------------------------
+   COMMAND DEFINITIONS
+   ------------------------------------------------- */
 const commands = [
+  // --- MODERATION -------------------------------------------------
   new SlashCommandBuilder()
     .setName('mute')
     .setDescription('Mute a user')
@@ -286,6 +373,8 @@ const commands = [
     .addRoleOption(o => o.setName('role').setDescription('Role to give').setRequired(true)),
   new SlashCommandBuilder().setName('membercount').setDescription('Show current member count'),
   new SlashCommandBuilder().setName('onlinecount').setDescription('Show online member count'),
+
+  // --- GIVEAWAY -------------------------------------------------
   new SlashCommandBuilder()
     .setName('giveaway')
     .setDescription('Manage giveaways')
@@ -297,6 +386,8 @@ const commands = [
         .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(1440))
         .addIntegerOption(o => o.setName('winners').setDescription('Number of winners (default: 1)').setRequired(false).setMinValue(1).setMaxValue(100))
     ),
+
+  // --- TICKETS -------------------------------------------------
   new SlashCommandBuilder()
     .setName('ticket')
     .setDescription('Manage tickets')
@@ -317,15 +408,38 @@ const commands = [
     .addSubcommand(s => s.setName('claim').setDescription('Claim a ticket'))
     .addSubcommand(s => s.setName('unclaim').setDescription('Unclaim a ticket'))
     .addSubcommand(s => s.setName('transcript').setDescription('Get ticket transcript')),
-  new SlashCommandBuilder().setName('premium').setDescription('Display premium script advertisement')
+
+  // --- PREMIUM AD -------------------------------------------------
+  new SlashCommandBuilder().setName('premium').setDescription('Display premium script advertisement'),
+
+  // --- NEW: MEDIA PARTNER PANEL -------------------------------------------------
+  new SlashCommandBuilder()
+    .setName('media-partner')
+    .setDescription('Create the Eps1llon Hub Media Partnership panel')
+    .addChannelOption(o =>
+      o
+        .setName('target')
+        .setDescription('Channel where the panel should be posted')
+        .setRequired(false)
+        .addChannelTypes(ChannelType.GuildText)
+    )
+    .toJSON()
 ].map(c => c.toJSON());
 
+/* -------------------------------------------------
+   REST (register commands)
+   ------------------------------------------------- */
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
+/* -------------------------------------------------
+   CLIENT READY
+   ------------------------------------------------- */
 client.once(Events.ClientReady, async () => {
   console.log(`Ready as ${client.user.tag}`);
   try {
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+
+    // ---- Ensure the premium ad is present (unchanged) ----
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
     if (premiumChannel) {
       const messages = await premiumChannel.messages.fetch({ limit: 5 });
@@ -359,7 +473,11 @@ client.once(Events.ClientReady, async () => {
   }
 });
 
+/* -------------------------------------------------
+   INTERACTION CREATE (commands, buttons, modals)
+   ------------------------------------------------- */
 client.on(Events.InteractionCreate, async interaction => {
+  /* ---------- SLASH COMMANDS ---------- */
   if (interaction.isChatInputCommand()) {
     const { commandName, options, member, channel, guild } = interaction;
     const modCommands = [
@@ -381,7 +499,9 @@ client.on(Events.InteractionCreate, async interaction => {
     if (modCommands.includes(commandName) && !hasPermission(member)) {
       return interaction.reply({ content: '❌ You don\'t have permission to use this command!', ephemeral: true });
     }
+
     try {
+      /* ----- MODERATION COMMANDS (unchanged) ----- */
       if (commandName === 'mute') {
         const user = options.getUser('user');
         const duration = options.getInteger('duration') || 10;
@@ -661,7 +781,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
         const data = tickets.get(interaction.channel.id);
         if (sub === 'create') {
-          // Handled by button; no action needed
+          // Handled by button – nothing needed here
         } else if (sub === 'close') {
           if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           await closeTicket(interaction, data);
@@ -698,11 +818,45 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       } else if (commandName === 'premium') {
         await sendPremiumAd(interaction);
+      } else if (commandName === 'media-partner') {
+        /* ---------- NEW COMMAND ---------- */
+        if (!hasPermission(member)) {
+          return interaction.reply({ content: '❌ You don’t have permission to create the media‑partner panel.', ephemeral: true });
+        }
+        const targetChannel = options.getChannel('target') ?? channel;
+
+        const embed = new EmbedBuilder()
+          .setTitle('📣 Eps1llon Hub – Media Partnership')
+          .setDescription(
+            '**We are looking for content creators & showcase‑ers!**\n' +
+            'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the Eps1llon Hub script.\n' +
+            'Successful partners receive **paid collaborations** and **FREE lifetime premium scripts** as soon as they become an official creator.'
+          )
+          .setColor('#8A2BE2')
+          .addFields(
+            { name: 'What you get', value: '- Direct payment per successful campaign\n- Free lifetime premium script\n- Early‑access to new features', inline: true },
+            { name: 'What we need', value: '- Minimum 5k views per video (or equivalent engagement)\n- Honest review & clear mention of Eps1llon Hub', inline: true }
+          )
+          .setFooter({ text: 'Ready to join? Click the button below!' })
+          .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('media_apply')
+            .setLabel('Apply Now')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📝')
+        );
+
+        await targetChannel.send({ embeds: [embed], components: [row] });
+        await interaction.reply({ content: `✅ Media‑partner panel posted in <#${targetChannel.id}>`, ephemeral: true });
       }
     } catch (e) {
       console.error(e);
       if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: '❌ Command error.', ephemeral: true });
     }
+
+  /* ---------- BUTTON INTERACTIONS ---------- */
   } else if (interaction.isButton()) {
     if (interaction.customId === 'create_ticket') {
       const modal = new ModalBuilder()
@@ -735,6 +889,7 @@ client.on(Events.InteractionCreate, async interaction => {
       giveaways.set(interaction.message.id, data);
       await interaction.reply({ content: '🎉 Joined giveaway!', ephemeral: true });
     } else if (interaction.customId === 'purchase_premium') {
+      /* ----- PREMIUM PURCHASE (unchanged) ----- */
       try {
         const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
         if (!category) return interaction.reply({ content: '❌ Purchase category missing.', ephemeral: true });
@@ -813,75 +968,139 @@ client.on(Events.InteractionCreate, async interaction => {
       const data = tickets.get(interaction.channel.id);
       if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
       await sendTranscript(interaction, data);
+    } else if (interaction.customId === 'media_apply') {
+      /* ---------- NEW MEDIA‑PARTNER APPLICATION MODAL ---------- */
+      const modal = new ModalBuilder()
+        .setCustomId('media_application')
+        .setTitle('Media Partnership Application');
+
+      const platform = new TextInputBuilder()
+        .setCustomId('media_platform')
+        .setLabel('Platform(s) (TikTok, YouTube, Live Streamer, Both)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. TikTok, YouTube')
+        .setRequired(true)
+        .setMaxLength(50);
+
+      const link = new TextInputBuilder()
+        .setCustomId('media_link')
+        .setLabel('Channel / Profile Link')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('https://www.youtube.com/…')
+        .setRequired(true)
+        .setMaxLength(200);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(platform),
+        new ActionRowBuilder().addComponents(link)
+      );
+
+      await interaction.showModal(modal);
     }
-  } else if (interaction.isModalSubmit() && interaction.customId === 'ticket_modal') {
-    await interaction.deferReply({ ephemeral: true });
-    const subject = interaction.fields.getTextInputValue('ticket_subject');
-    const description = interaction.fields.getTextInputValue('ticket_description');
-    const category = interaction.guild.channels.cache.get(TICKET_CATEGORY_ID);
-    if (!category) return interaction.editReply({ content: '❌ Ticket category missing.' });
-    const ticket = await interaction.guild.channels.create({
-      name: `ticket-${interaction.user.username}`,
-      type: ChannelType.GuildText,
-      parent: category.id,
-      topic: `Ticket for ${interaction.user.tag} | Subject: ${subject}`,
-      permissionOverwrites: [
-        { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-        { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
-        { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
-        { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
-      ]
-    });
-    const panel = new EmbedBuilder()
-      .setTitle('🎫 Ticket Controls')
-      .setDescription('Use the buttons below to manage this ticket')
-      .setColor('#0099ff');
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success).setEmoji('✅'),
-      new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
-      new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary).setEmoji('📝')
-    );
-    await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}>`, embeds: [panel], components: [row] });
-    const ticketEmbed = new EmbedBuilder()
-      .setTitle(`🎫 Ticket: ${subject}`)
-      .setDescription(description)
-      .addFields(
-        { name: 'Created By', value: `<@${interaction.user.id}>`, inline: true },
-        { name: 'Ticket ID', value: ticket.id, inline: true },
-        { name: 'Status', value: 'Open', inline: true }
-      )
-      .setColor('#00ff00')
-      .setTimestamp();
-    await ticket.send({ embeds: [ticketEmbed] });
-    tickets.set(ticket.id, { userId: interaction.user.id, channelId: ticket.id, status: 'open', timestamp: Date.now(), claimedBy: null });
-    ticketTranscripts.set(ticket.id, []);
-    await interaction.editReply({ content: `✅ Ticket created: <#${ticket.id}>` });
-    const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
-    if (log) {
-      const logEmbed = new EmbedBuilder()
-        .setTitle('🎫 Ticket Created')
+  }
+
+  /* ---------- MODAL SUBMITS ---------- */
+  else if (interaction.isModalSubmit()) {
+    if (interaction.customId === 'ticket_modal') {
+      await interaction.deferReply({ ephemeral: true });
+      const subject = interaction.fields.getTextInputValue('ticket_subject');
+      const description = interaction.fields.getTextInputValue('ticket_description');
+      const category = interaction.guild.channels.cache.get(TICKET_CATEGORY_ID);
+      if (!category) return interaction.editReply({ content: '❌ Ticket category missing.' });
+      const ticket = await interaction.guild.channels.create({
+        name: `ticket-${interaction.user.username}`,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        topic: `Ticket for ${interaction.user.tag} | Subject: ${subject}`,
+        permissionOverwrites: [
+          { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+          { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
+          { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
+        ]
+      });
+      const panel = new EmbedBuilder()
+        .setTitle('🎫 Ticket Controls')
+        .setDescription('Use the buttons below to manage this ticket')
+        .setColor('#0099ff');
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success).setEmoji('✅'),
+        new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
+        new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary).setEmoji('📝')
+      );
+      await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}>`, embeds: [panel], components: [row] });
+      const ticketEmbed = new EmbedBuilder()
+        .setTitle(`🎫 Ticket: ${subject}`)
+        .setDescription(description)
         .addFields(
-          { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
-          { name: 'Subject', value: subject, inline: false },
-          { name: 'Description', value: description.substring(0, 1024), inline: false }
+          { name: 'Created By', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Ticket ID', value: ticket.id, inline: true },
+          { name: 'Status', value: 'Open', inline: true }
         )
         .setColor('#00ff00')
         .setTimestamp();
-      await log.send({ embeds: [logEmbed] });
+      await ticket.send({ embeds: [ticketEmbed] });
+      tickets.set(ticket.id, { userId: interaction.user.id, channelId: ticket.id, status: 'open', timestamp: Date.now(), claimedBy: null });
+      ticketTranscripts.set(ticket.id, []);
+      await interaction.editReply({ content: `✅ Ticket created: <#${ticket.id}>` });
+      const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
+      if (log) {
+        const logEmbed = new EmbedBuilder()
+          .setTitle('🎫 Ticket Created')
+          .addFields(
+            { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+            { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
+            { name: 'Subject', value: subject, inline: false },
+            { name: 'Description', value: description.substring(0, 1024), inline: false }
+          )
+          .setColor('#00ff00')
+          .setTimestamp();
+        await log.send({ embeds: [logEmbed] });
+      }
+    } else if (interaction.customId === 'media_application') {
+      await interaction.deferReply({ ephemeral: true });
+      const platform = interaction.fields.getTextInputValue('media_platform');
+      const link = interaction.fields.getTextInputValue('media_link');
+
+      const embed = new EmbedBuilder()
+        .setTitle('🗒️ New Media Partnership Application')
+        .setColor('#00CED1')
+        .addFields(
+          { name: 'Applicant', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+          { name: 'Platform(s)', value: platform, inline: true },
+          { name: 'Channel / Profile', value: link, inline: false }
+        )
+        .setTimestamp();
+
+      const logChannel = interaction.guild.channels.cache.get(MEDIA_PARTNER_LOG_CHANNEL_ID);
+      if (logChannel) {
+        await logChannel.send({
+          content: `<@&${STAFF_ROLE_ID}> New media‑partner application received!`,
+          embeds: [embed]
+        });
+      }
+
+      await interaction.editReply({ content: '✅ Your application has been sent! Our staff will review it shortly.', ephemeral: true });
     }
   }
 });
 
+/* -------------------------------------------------
+   MESSAGE CREATE (auto‑mod + ticket transcript)
+   ------------------------------------------------- */
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
   if (message.content.length < 2) return;
   if (hasPermission(message.member)) return;
+
+  // Ticket transcript collection
   if (tickets.has(message.channel.id)) {
     const arr = ticketTranscripts.get(message.channel.id) || [];
     arr.push({ author: message.author.tag, content: message.content, timestamp: message.createdTimestamp });
     ticketTranscripts.set(message.channel.id, arr);
   }
+
+  // Auto‑mod detection
   const result = detectToSContent(message.content);
   if (result.detected) {
     try {
@@ -894,18 +1113,22 @@ client.on(Events.MessageCreate, async message => {
         const target = await message.guild.members.fetch(message.author.id);
         if (target && target.moderatable) {
           await target.timeout(30 * 60 * 1000, '3 strikes - auto mute');
-          await message.channel.send(`🔇 <@${message.author.id}> auto-muted for 30 minutes.`);
-          await logAction(message.guild, 'mute', message.author, client.user, 'Auto-mute after 3 strikes', 30 * 60, `Deleted: ${deleted.substring(0, 500)}`);
+          await message.channel.send(`🔇 <@${message.author.id}> auto‑muted for 30 minutes.`);
+          await logAction(message.guild, 'mute', message.author, client.user, 'Auto‑mute after 3 strikes', 30 * 60, `Deleted: ${deleted.substring(0, 500)}`);
         }
         userStrikes.set(message.author.id, 0);
       } else {
         await message.channel.send(`⚠️ <@${message.author.id}> message removed. Strikes: ${strikes}/3`);
       }
       await logAction(message.guild, 'automod', message.author, client.user, 'ToS violation', null, `Deleted: ${deleted.substring(0, 500)}`);
-    } catch {}
+      await logPhishing(message.guild, message.author, deleted, result.pattern);
+    } catch (_) {}
   }
 });
 
+/* -------------------------------------------------
+   GUILD MEMBER LOGS (join/leave)
+   ------------------------------------------------- */
 client.on(Events.GuildMemberAdd, async member => {
   const welcome = member.guild.channels.cache.get(WELCOME_CHANNEL_ID);
   if (welcome) {
@@ -940,6 +1163,9 @@ client.on(Events.GuildMemberRemove, async member => {
   }
 });
 
+/* -------------------------------------------------
+   MESSAGE DELETE / EDIT LOGS
+   ------------------------------------------------- */
 client.on(Events.MessageDelete, async message => {
   if (message.author?.bot) return;
   const log = message.guild?.channels.cache.get(LOG_CHANNEL_ID);
@@ -960,11 +1186,18 @@ client.on(Events.MessageUpdate, async (oldMsg, newMsg) => {
   if (log) {
     const embed = new EmbedBuilder()
       .setTitle('✏️ Message Edited')
-      .setDescription(`**Channel:** <#${newMsg.channel.id}>\n**Author:** ${newMsg.author.tag} (${newMsg.author.id})\n**Before:** ${oldMsg.content.substring(0, 500)}\n**After:** ${newMsg.content.substring(0, 500)}`)
+      .setDescription(`**Channel:** <#${newMsg.channel.id}>\n**Author:** ${newMsg.author.tag} (${newMsg.author.id})`)
+      .addFields(
+        { name: 'Before', value: oldMsg.content.substring(0, 500) || '*empty*' },
+        { name: 'After', value: newMsg.content.substring(0, 500) || '*empty*' }
+      )
       .setColor('#0000FF')
       .setTimestamp();
     await log.send({ embeds: [embed] });
   }
 });
 
+/* -------------------------------------------------
+   LOGIN
+   ------------------------------------------------- */
 client.login(process.env.DISCORD_TOKEN);
