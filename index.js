@@ -297,7 +297,7 @@ async function sendPremiumAd(interaction) {
 }
 
 /* -------------------------------------------------
-   COMMAND DEFINITIONS
+   COMMAND DEFINITIONS (no .toJSON() here)
    ------------------------------------------------- */
 const commands = [
   // --- MODERATION -------------------------------------------------
@@ -423,11 +423,11 @@ const commands = [
         .setRequired(false)
         .addChannelTypes(ChannelType.GuildText)
     )
-    // **← NO .toJSON() here!**
-].map(c => c.toJSON());
+    // **no .toJSON() here**
+];
 
 /* -------------------------------------------------
-   REST (register commands)
+   REST (register commands) – convert to JSON here
    ------------------------------------------------- */
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
@@ -437,7 +437,10 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 client.once(Events.ClientReady, async () => {
   console.log(`Ready as ${client.user.tag}`);
   try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    // Convert each SlashCommandBuilder to raw JSON before sending
+    await rest.put(Routes.applicationCommands(client.user.id), {
+      body: commands.map(c => c.toJSON())
+    });
 
     // ---- Ensure the premium ad is present (unchanged) ----
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
@@ -828,7 +831,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const embed = new EmbedBuilder()
           .setTitle('📣 Eps1llon Hub – Media Partnership')
           .setDescription(
-            '**We are looking for content creators & showcasers**\n' +
+            '**We are looking for content creators & showcase‑ers!**\n' +
             'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the Eps1llon Hub script.\n' +
             'Successful partners receive **paid collaborations** and **FREE lifetime premium scripts** as soon as they become an official creator.'
           )
