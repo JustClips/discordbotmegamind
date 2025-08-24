@@ -423,7 +423,7 @@ const commands = [
         .setRequired(false)
         .addChannelTypes(ChannelType.GuildText)
     )
-    .toJSON()
+    // **← NO .toJSON() here!**
 ].map(c => c.toJSON());
 
 /* -------------------------------------------------
@@ -828,7 +828,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const embed = new EmbedBuilder()
           .setTitle('📣 Eps1llon Hub – Media Partnership')
           .setDescription(
-            '**We are looking for content creators & showcase‑ers!**\n' +
+            '**We are looking for content creators & showcasers**\n' +
             'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the Eps1llon Hub script.\n' +
             'Successful partners receive **paid collaborations** and **FREE lifetime premium scripts** as soon as they become an official creator.'
           )
