@@ -30,7 +30,9 @@ const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKE
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
 const PREMIUM_CHANNEL_ID = '1403870367524585482';
 const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;        // may be null → no category
-const PREMIUM_PRICE = 10;
+const APPLICATION_CATEGORY_ID = '1407184066205319189';                     // <-- new constant (same as premium purchase category)
+const PREMIUM_PRICE_WEEK = 10;   // $10 / week
+const PREMIUM_PRICE_MONTH = 30;  // $30 / month
 
 /* NEW CONSTANTS ------------------------------------------------- */
 const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
@@ -261,16 +263,16 @@ async function sendTranscript(interaction, ticketData) {
 }
 
 /* -------------------------------------------------
-   PREMIUM AD (unchanged – kept for reference)
+   PREMIUM AD (now weekly / monthly pricing)
    ------------------------------------------------- */
 async function sendPremiumAd(interaction) {
   if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id))
     return interaction.reply({ content: '❌ This command can only be used in the premium channel!', ephemeral: true });
   const embed = new EmbedBuilder()
-    .setTitle('💎 Epsillon Hub Premium')
+    .setTitle('💎 eps1llon hub Premium')
     .setColor('#FFD700')
     .addFields(
-      { name: '💰 Price', value: '$10 One-Time Payment\nLifetime Access', inline: true },
+      { name: '💰 Price', value: '$10 / week\n$30 / month', inline: true },
       { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
     )
     .setFooter({ text: 'Premium Quality Solution' })
@@ -283,7 +285,7 @@ async function sendPremiumAd(interaction) {
       .setEmoji('💳')
   );
   await interaction.reply({
-    content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
+    content: 'To purchase a subscription for eps1llon hub read the content below.',
     embeds: [embed],
     components: [row]
   });
@@ -408,7 +410,7 @@ const commands = [
   // --- NEW: MEDIA PARTNER PANEL -------------------------------------------------
   new SlashCommandBuilder()
     .setName('media-partner')
-    .setDescription('Create the Eps1llon Hub Media Partnership panel')
+    .setDescription('Create the eps1llon hub Media Partnership panel')
     .addChannelOption(o =>
       o
         .setName('target')
@@ -420,7 +422,7 @@ const commands = [
   // --- NEW: RESELLER PARTNER PANEL -------------------------------------------------
   new SlashCommandBuilder()
     .setName('reseller-partner')
-    .setDescription('Create the Eps1llon Hub Reseller Partnership panel')
+    .setDescription('Create the eps1llon hub Reseller Partnership panel')
     .addChannelOption(o =>
       o
         .setName('target')
@@ -449,13 +451,13 @@ client.once(Events.ClientReady, async () => {
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
     if (premiumChannel) {
       const messages = await premiumChannel.messages.fetch({ limit: 5 });
-      const exists = messages.find(m => m.embeds[0]?.title === '💎 Epsillon Hub Premium' && m.author.id === client.user.id);
+      const exists = messages.find(m => m.embeds[0]?.title === '💎 eps1llon hub Premium' && m.author.id === client.user.id);
       if (!exists) {
         const embed = new EmbedBuilder()
-          .setTitle('💎 Epsillon Hub Premium')
+          .setTitle('💎 eps1llon hub Premium')
           .setColor('#FFD700')
           .addFields(
-            { name: '💰 Price', value: '$10 One-Time Payment\nLifetime Access', inline: true },
+            { name: '💰 Price', value: '$10 / week\n$30 / month', inline: true },
             { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
           )
           .setFooter({ text: 'Premium Quality Solution' })
@@ -468,7 +470,7 @@ client.once(Events.ClientReady, async () => {
             .setEmoji('💳')
         );
         await premiumChannel.send({
-          content: 'To purchase the lifetime version of the script Epsillon Hub read the content below.',
+          content: 'To purchase a subscription for eps1llon hub read the content below.',
           embeds: [embed],
           components: [row]
         });
@@ -832,16 +834,16 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetChannel = options.getChannel('target') ?? channel;
 
         const embed = new EmbedBuilder()
-          .setTitle('📣 Eps1llon Hub – Media Partnership')
+          .setTitle('📣 eps1llon hub – Media Partnership')
           .setDescription(
             '**We are looking for content creators & showcase‑ers!**\n' +
-            'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the Eps1llon Hub script.\n' +
+            'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the eps1llon hub script.\n' +
             'Successful partners receive **paid collaborations** and **FREE lifetime premium scripts** as soon as they become an official creator.'
           )
           .setColor('#8A2BE2')
           .addFields(
             { name: 'What you get', value: '- Direct payment per successful campaign\n- Free lifetime premium script\n- Early‑access to new features', inline: true },
-            { name: 'What we need', value: '- Minimum **1000** views per video (or equivalent engagement)\n- Honest review & clear mention of Eps1llon Hub', inline: true }
+            { name: 'What we need', value: '- Minimum **1000** views per video (or equivalent engagement)\n- Honest review & clear mention of eps1llon hub', inline: true }
           )
           .setFooter({ text: 'Ready to join? Click the button below!' })
           .setTimestamp();
@@ -850,7 +852,7 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder()
             .setCustomId('media_apply')
             .setLabel('Apply Now')
-            .setStyle(ButtonStyle.Primary)          // <-- make sure a style is set
+            .setStyle(ButtonStyle.Primary)
             .setEmoji('📝')
         );
 
@@ -864,7 +866,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetChannel = options.getChannel('target') ?? channel;
 
         const embed = new EmbedBuilder()
-          .setTitle('📣 Eps1llon Hub – Reseller Partnership')
+          .setTitle('📣 eps1llon hub – Reseller Partnership')
           .setDescription(
             '**We are looking for resellers outside of the United States** (e.g., Dubai, Brazil, etc.).\n' +
             'If you can sell our premium script to customers in your region and handle payments, we want to work with you.'
@@ -926,7 +928,7 @@ client.on(Events.InteractionCreate, async interaction => {
       giveaways.set(interaction.message.id, data);
       await interaction.reply({ content: '🎉 Joined giveaway!', ephemeral: true });
     } else if (interaction.customId === 'purchase_premium') {
-      /* ----- PREMIUM PURCHASE (unchanged) ----- */
+      /* ----- PREMIUM PURCHASE (price text updated) ----- */
       try {
         const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
         const channelOptions = {
@@ -942,7 +944,7 @@ client.on(Events.InteractionCreate, async interaction => {
             { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
           ]
         };
-        if (category) channelOptions.parent = category.id;   // only set parent if the category exists
+        if (category) channelOptions.parent = category.id;
         const ticket = await interaction.guild.channels.create(channelOptions);
 
         const panel = new EmbedBuilder()
@@ -958,8 +960,8 @@ client.on(Events.InteractionCreate, async interaction => {
         );
         await ticket.send({ content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')}`, embeds: [panel], components: [row] });
         const info = new EmbedBuilder()
-          .setTitle('💎 Epsillon Hub Premium Purchase')
-          .setDescription(`Price: $${PREMIUM_PRICE} (Lifetime)\nSupported payments: CashApp, Crypto, Gift Cards`)
+          .setTitle('💎 eps1llon hub Premium Purchase')
+          .setDescription(`Price: $${PREMIUM_PRICE_WEEK} / week or $${PREMIUM_PRICE_MONTH} / month\nSupported payments: CashApp, Crypto, Gift Cards`)
           .setColor('#FFD700')
           .setTimestamp();
         await ticket.send({ embeds: [info] });
@@ -973,7 +975,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .addFields(
               { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
               { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
-              { name: 'Price', value: `$${PREMIUM_PRICE} Lifetime`, inline: true }
+              { name: 'Price', value: `$${PREMIUM_PRICE_WEEK} / week or $${PREMIUM_PRICE_MONTH} / month`, inline: true }
             )
             .setColor('#FFD700')
             .setTimestamp();
@@ -1006,7 +1008,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
       await sendTranscript(interaction, data);
     } else if (interaction.customId === 'media_apply') {
-      /* ---------- NEW MEDIA‑PARTNER APPLICATION MODAL ---------- */
+      /* ---------- MEDIA‑PARTNER APPLICATION MODAL ---------- */
       const modal = new ModalBuilder()
         .setCustomId('media_application')
         .setTitle('Media Partnership Application');
@@ -1034,7 +1036,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.showModal(modal);
     } else if (interaction.customId === 'reseller_apply') {
-      /* ---------- NEW RESELLER APPLICATION MODAL ---------- */
+      /* ---------- RESELLER APPLICATION MODAL ---------- */
       const modal = new ModalBuilder()
         .setCustomId('reseller_application')
         .setTitle('Reseller Partnership Application');
@@ -1090,7 +1092,7 @@ client.on(Events.InteractionCreate, async interaction => {
           { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
         ]
       };
-      if (category) channelOptions.parent = category.id;   // only set parent if the category exists
+      if (category) channelOptions.parent = category.id;
       const ticket = await interaction.guild.channels.create(channelOptions);
 
       const panel = new EmbedBuilder()
@@ -1139,6 +1141,24 @@ client.on(Events.InteractionCreate, async interaction => {
       const platform = interaction.fields.getTextInputValue('media_platform');
       const link = interaction.fields.getTextInputValue('media_link');
 
+      // ---- CREATE APPLICATION CHANNEL ----
+      const channelOptions = {
+        name: `media-${interaction.user.username}`.toLowerCase(),
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+          ...OWNER_IDS.map(id => ({
+            id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+          })),
+          { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
+        ]
+      };
+      const category = interaction.guild.channels.cache.get(APPLICATION_CATEGORY_ID);
+      if (category) channelOptions.parent = category.id;
+      const appChannel = await interaction.guild.channels.create(channelOptions);
+
       const embed = new EmbedBuilder()
         .setTitle('🗒️ New Media Partnership Application')
         .setColor('#00CED1')
@@ -1157,12 +1177,31 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      await interaction.editReply({ content: '✅ Your application has been sent! Our staff will review it shortly.', ephemeral: true });
+      await appChannel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
+      await interaction.editReply({ content: '✅ Your application channel has been created. Staff will review it shortly.', ephemeral: true });
     } else if (interaction.customId === 'reseller_application') {
       await interaction.deferReply({ ephemeral: true });
       const payment = interaction.fields.getTextInputValue('reseller_payment');
       const availability = interaction.fields.getTextInputValue('reseller_availability');
       const experience = interaction.fields.getTextInputValue('reseller_experience');
+
+      // ---- CREATE APPLICATION CHANNEL ----
+      const channelOptions = {
+        name: `reseller-${interaction.user.username}`.toLowerCase(),
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+          { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+          ...OWNER_IDS.map(id => ({
+            id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+          })),
+          { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
+        ]
+      };
+      const category = interaction.guild.channels.cache.get(APPLICATION_CATEGORY_ID);
+      if (category) channelOptions.parent = category.id;
+      const appChannel = await interaction.guild.channels.create(channelOptions);
 
       const embed = new EmbedBuilder()
         .setTitle('🗒️ New Reseller Partnership Application')
@@ -1183,7 +1222,8 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      await interaction.editReply({ content: '✅ Your reseller application has been sent! Our staff will review it shortly.', ephemeral: true });
+      await appChannel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
+      await interaction.editReply({ content: '✅ Your reseller application channel has been created. Staff will review it shortly.', ephemeral: true });
     }
   }
 });
