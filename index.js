@@ -25,11 +25,11 @@ const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',').map(id => id.trim()) : [];
 const LOG_CHANNEL_ID = '1404675690007105596';
 const WELCOME_CHANNEL_ID = '1364387827386683484';
-const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || 'YOUR_TICKET_CATEGORY_ID';
+const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || null;          // may be null → no category
 const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKET_LOGS_CHANNEL_ID';
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
 const PREMIUM_CHANNEL_ID = '1403870367524585482';
-const PREMIUM_CATEGORY_ID = '1407184066205319189';
+const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;        // may be null → no category
 const PREMIUM_PRICE = 10;
 
 /* NEW CONSTANTS ------------------------------------------------- */
@@ -422,8 +422,19 @@ const commands = [
         .setDescription('Channel where the panel should be posted')
         .setRequired(false)
         .addChannelTypes(ChannelType.GuildText)
+    ),
+
+  // --- NEW: RESELLER PARTNER PANEL -------------------------------------------------
+  new SlashCommandBuilder()
+    .setName('reseller-partner')
+    .setDescription('Create the Eps1llon Hub Reseller Partnership panel')
+    .addChannelOption(o =>
+      o
+        .setName('target')
+        .setDescription('Channel where the panel should be posted')
+        .setRequired(false)
+        .addChannelTypes(ChannelType.GuildText)
     )
-    // **no .toJSON() here**
 ];
 
 /* -------------------------------------------------
@@ -437,12 +448,12 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 client.once(Events.ClientReady, async () => {
   console.log(`Ready as ${client.user.tag}`);
   try {
-    // Convert each SlashCommandBuilder to raw JSON before sending
+    // Register slash commands
     await rest.put(Routes.applicationCommands(client.user.id), {
       body: commands.map(c => c.toJSON())
     });
 
-    // ---- Ensure the premium ad is present (unchanged) ----
+    // Ensure the premium ad is present (unchanged)
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
     if (premiumChannel) {
       const messages = await premiumChannel.messages.fetch({ limit: 5 });
@@ -838,7 +849,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setColor('#8A2BE2')
           .addFields(
             { name: 'What you get', value: '- Direct payment per successful campaign\n- Free lifetime premium script\n- Early‑access to new features', inline: true },
-            { name: 'What we need', value: '- Minimum 5k views per video (or equivalent engagement)\n- Honest review & clear mention of Eps1llon Hub', inline: true }
+            { name: 'What we need', value: '- Minimum **1000** views per video (or equivalent engagement)\n- Honest review & clear mention of Eps1llon Hub', inline: true }
           )
           .setFooter({ text: 'Ready to join? Click the button below!' })
           .setTimestamp();
@@ -847,12 +858,43 @@ client.on(Events.InteractionCreate, async interaction => {
           new ButtonBuilder()
             .setCustomId('media_apply')
             .setLabel('Apply Now')
-            .setStyle(ButtonStyle.Primary)
+            .setStyle(ButtonStyle.Primary)          // <-- make sure a style is set
             .setEmoji('📝')
         );
 
         await targetChannel.send({ embeds: [embed], components: [row] });
         await interaction.reply({ content: `✅ Media‑partner panel posted in <#${targetChannel.id}>`, ephemeral: true });
+      } else if (commandName === 'reseller-partner') {
+        /* ---------- NEW RESELLER COMMAND ---------- */
+        if (!hasPermission(member)) {
+          return interaction.reply({ content: '❌ You don’t have permission to create the reseller‑partner panel.', ephemeral: true });
+        }
+        const targetChannel = options.getChannel('target') ?? channel;
+
+        const embed = new EmbedBuilder()
+          .setTitle('📣 Eps1llon Hub – Reseller Partnership')
+          .setDescription(
+            '**We are looking for resellers outside of the United States** (e.g., Dubai, Brazil, etc.).\n' +
+            'If you can sell our premium script to customers in your region and handle payments, we want to work with you.'
+          )
+          .setColor('#FF8C00')
+          .addFields(
+            { name: 'What you get', value: '- Commission per sale\n- Access to premium scripts & updates\n- Direct support from the dev team', inline: true },
+            { name: 'What we need', value: '- Ability to accept payments (PayPal, crypto, bank transfer, etc.)\n- Availability to sell when needed\n- Past reseller experience or a store link (if any)', inline: true }
+          )
+          .setFooter({ text: 'Ready to join? Click the button below!' })
+          .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('reseller_apply')
+            .setLabel('Apply Now')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📝')
+        );
+
+        await targetChannel.send({ embeds: [embed], components: [row] });
+        await interaction.reply({ content: `✅ Reseller‑partner panel posted in <#${targetChannel.id}>`, ephemeral: true });
       }
     } catch (e) {
       console.error(e);
@@ -895,12 +937,9 @@ client.on(Events.InteractionCreate, async interaction => {
       /* ----- PREMIUM PURCHASE (unchanged) ----- */
       try {
         const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
-        if (!category) return interaction.reply({ content: '❌ Purchase category missing.', ephemeral: true });
-        const ticket = await interaction.guild.channels.create({
+        const channelOptions = {
           name: `lifetime-purchase-${interaction.user.username}`,
           type: ChannelType.GuildText,
-          parent: category.id,
-          topic: `Purchase request from ${interaction.user.tag}`,
           permissionOverwrites: [
             { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
             { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
@@ -910,7 +949,10 @@ client.on(Events.InteractionCreate, async interaction => {
             })),
             { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
           ]
-        });
+        };
+        if (category) channelOptions.parent = category.id;   // only set parent if the category exists
+        const ticket = await interaction.guild.channels.create(channelOptions);
+
         const panel = new EmbedBuilder()
           .setTitle('🛒 Purchase Ticket')
           .setDescription('Our team will assist you shortly.')
@@ -999,6 +1041,43 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       await interaction.showModal(modal);
+    } else if (interaction.customId === 'reseller_apply') {
+      /* ---------- NEW RESELLER APPLICATION MODAL ---------- */
+      const modal = new ModalBuilder()
+        .setCustomId('reseller_application')
+        .setTitle('Reseller Partnership Application');
+
+      const payment = new TextInputBuilder()
+        .setCustomId('reseller_payment')
+        .setLabel('Payment methods you can accept')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('PayPal, crypto, bank transfer, etc.')
+        .setRequired(true)
+        .setMaxLength(100);
+
+      const availability = new TextInputBuilder()
+        .setCustomId('reseller_availability')
+        .setLabel('Are you always online / ready to sell when needed?')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Yes / No – typical response time')
+        .setRequired(true)
+        .setMaxLength(100);
+
+      const experience = new TextInputBuilder()
+        .setCustomId('reseller_experience')
+        .setLabel('Past reseller experience or store link (if any)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('e.g., https://myshop.com …')
+        .setRequired(false)
+        .setMaxLength(300);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(payment),
+        new ActionRowBuilder().addComponents(availability),
+        new ActionRowBuilder().addComponents(experience)
+      );
+
+      await interaction.showModal(modal);
     }
   }
 
@@ -1009,19 +1088,19 @@ client.on(Events.InteractionCreate, async interaction => {
       const subject = interaction.fields.getTextInputValue('ticket_subject');
       const description = interaction.fields.getTextInputValue('ticket_description');
       const category = interaction.guild.channels.cache.get(TICKET_CATEGORY_ID);
-      if (!category) return interaction.editReply({ content: '❌ Ticket category missing.' });
-      const ticket = await interaction.guild.channels.create({
+      const channelOptions = {
         name: `ticket-${interaction.user.username}`,
         type: ChannelType.GuildText,
-        parent: category.id,
-        topic: `Ticket for ${interaction.user.tag} | Subject: ${subject}`,
         permissionOverwrites: [
           { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
           { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
           { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
           { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
         ]
-      });
+      };
+      if (category) channelOptions.parent = category.id;   // only set parent if the category exists
+      const ticket = await interaction.guild.channels.create(channelOptions);
+
       const panel = new EmbedBuilder()
         .setTitle('🎫 Ticket Controls')
         .setDescription('Use the buttons below to manage this ticket')
@@ -1032,6 +1111,7 @@ client.on(Events.InteractionCreate, async interaction => {
         new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary).setEmoji('📝')
       );
       await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}>`, embeds: [panel], components: [row] });
+
       const ticketEmbed = new EmbedBuilder()
         .setTitle(`🎫 Ticket: ${subject}`)
         .setDescription(description)
@@ -1043,9 +1123,11 @@ client.on(Events.InteractionCreate, async interaction => {
         .setColor('#00ff00')
         .setTimestamp();
       await ticket.send({ embeds: [ticketEmbed] });
+
       tickets.set(ticket.id, { userId: interaction.user.id, channelId: ticket.id, status: 'open', timestamp: Date.now(), claimedBy: null });
       ticketTranscripts.set(ticket.id, []);
       await interaction.editReply({ content: `✅ Ticket created: <#${ticket.id}>` });
+
       const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
       if (log) {
         const logEmbed = new EmbedBuilder()
@@ -1084,6 +1166,32 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       await interaction.editReply({ content: '✅ Your application has been sent! Our staff will review it shortly.', ephemeral: true });
+    } else if (interaction.customId === 'reseller_application') {
+      await interaction.deferReply({ ephemeral: true });
+      const payment = interaction.fields.getTextInputValue('reseller_payment');
+      const availability = interaction.fields.getTextInputValue('reseller_availability');
+      const experience = interaction.fields.getTextInputValue('reseller_experience');
+
+      const embed = new EmbedBuilder()
+        .setTitle('🗒️ New Reseller Partnership Application')
+        .setColor('#FF8C00')
+        .addFields(
+          { name: 'Applicant', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+          { name: 'Payment Methods', value: payment, inline: true },
+          { name: 'Availability', value: availability, inline: true },
+          { name: 'Experience / Store Link', value: experience || '*None provided*', inline: false }
+        )
+        .setTimestamp();
+
+      const logChannel = interaction.guild.channels.cache.get(MEDIA_PARTNER_LOG_CHANNEL_ID);
+      if (logChannel) {
+        await logChannel.send({
+          content: `<@&${STAFF_ROLE_ID}> New reseller‑partner application received!`,
+          embeds: [embed]
+        });
+      }
+
+      await interaction.editReply({ content: '✅ Your reseller application has been sent! Our staff will review it shortly.', ephemeral: true });
     }
   }
 });
