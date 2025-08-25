@@ -81,19 +81,16 @@ function hasPermission(member) {
   if (member.roles.cache.has(MOD_ROLE_ID)) return true;
   return false;
 }
-
 function canManageRoles(member, targetRole) {
   if (OWNER_IDS.includes(member.id)) return true;
   if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) return false;
   return targetRole.position < member.roles.highest.position;
 }
-
 function canManageMember(member, targetMember) {
   if (OWNER_IDS.includes(member.id)) return true;
   if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
   return member.roles.highest.position > targetMember.roles.highest.position;
 }
-
 function formatTime(seconds) {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -106,7 +103,6 @@ function formatTime(seconds) {
   if (secs) timeString += `${secs}s`;
   return timeString.trim() || '0s';
 }
-
 function calculateWinChance(participants, winners) {
   if (!participants) return '0%';
   if (participants <= winners) return '100%';
@@ -144,8 +140,6 @@ async function logAction(guild, action, user, moderator, reason, duration = null
   if (additionalInfo) embed.addFields({ name: 'Details', value: additionalInfo, inline: false });
   await logChannel.send({ embeds: [embed] });
 }
-
-/* NEW – log phishing / scam attempts */
 async function logPhishing(guild, user, message, pattern) {
   const channel = guild.channels.cache.get(PHISHING_LOG_CHANNEL_ID);
   if (!channel) return;
@@ -250,7 +244,6 @@ async function closeTicket(interaction, ticketData) {
     } catch {}
   }, 10000);
 }
-
 async function sendTranscript(interaction, ticketData) {
   const transcript = ticketTranscripts.get(interaction.channel.id) || [];
   if (!transcript.length)
@@ -448,7 +441,6 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 client.once(Events.ClientReady, async () => {
   console.log(`Ready as ${client.user.tag}`);
   try {
-    // Register slash commands
     await rest.put(Routes.applicationCommands(client.user.id), {
       body: commands.map(c => c.toJSON())
     });
@@ -1021,7 +1013,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const platform = new TextInputBuilder()
         .setCustomId('media_platform')
-        .setLabel('Platform(s) (TikTok, YouTube, Live Streamer, Both)')
+        .setLabel('Platform(s) (TikTok, YouTube, etc.)')   // ≤45 chars
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('e.g. TikTok, YouTube')
         .setRequired(true)
@@ -1049,7 +1041,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const payment = new TextInputBuilder()
         .setCustomId('reseller_payment')
-        .setLabel('Payment methods you can accept')
+        .setLabel('Payment methods you accept')   // ≤45 chars
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('PayPal, crypto, bank transfer, etc.')
         .setRequired(true)
@@ -1057,7 +1049,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const availability = new TextInputBuilder()
         .setCustomId('reseller_availability')
-        .setLabel('Are you always online / ready to sell when needed?')
+        .setLabel('Always online / ready to sell?')   // ≤45 chars
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('Yes / No – typical response time')
         .setRequired(true)
@@ -1065,7 +1057,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const experience = new TextInputBuilder()
         .setCustomId('reseller_experience')
-        .setLabel('Past reseller experience or store link (if any)')
+        .setLabel('Past reseller experience / store link')   // ≤45 chars
         .setStyle(TextInputStyle.Paragraph)
         .setPlaceholder('e.g., https://myshop.com …')
         .setRequired(false)
