@@ -31,13 +31,15 @@ const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
 const PREMIUM_CHANNEL_ID = '1403870367524585482';
 const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;        // may be null → no category
 const APPLICATION_CATEGORY_ID = '1407184066205319189';                     // <-- new constant (same as premium purchase category)
-const PREMIUM_PRICE_WEEK = 10;   // $10 / week
-const PREMIUM_PRICE_MONTH = 30;  // $30 / month
+const PREMIUM_PRICE_LIFETIME = 10;  // $10 lifetime
 
 /* NEW CONSTANTS ------------------------------------------------- */
-const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
+const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360'; // Updated auto-mod log channel
 const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;   // role that gets pinged on a new media‑partner application
+
+// Additional roles that can access tickets
+const ADDITIONAL_TICKET_ROLES = ['1409618882041352322', '1396656209821564928'];
 
 /* -------------------------------------------------
    CLIENT & GLOBAL MAPS
@@ -263,16 +265,17 @@ async function sendTranscript(interaction, ticketData) {
 }
 
 /* -------------------------------------------------
-   PREMIUM AD (now weekly / monthly pricing)
+   PREMIUM AD (now lifetime pricing)
    ------------------------------------------------- */
 async function sendPremiumAd(interaction) {
   if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id))
     return interaction.reply({ content: '❌ This command can only be used in the premium channel!', ephemeral: true });
   const embed = new EmbedBuilder()
-    .setTitle('💎 eps1llon hub Premium')
+    .setTitle('💎 Eps1llon Hub Premium')
     .setColor('#FFD700')
     .addFields(
-      { name: '💰 Price', value: '$10 / week\n$30 / month', inline: true },
+      { name: '💰 Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true },
+      { name: '💳 Payment Methods', value: 'GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳', inline: true },
       { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
     )
     .setFooter({ text: 'Premium Quality Solution' })
@@ -285,7 +288,7 @@ async function sendPremiumAd(interaction) {
       .setEmoji('💳')
   );
   await interaction.reply({
-    content: 'To purchase a subscription for eps1llon hub read the content below.',
+    content: 'To purchase a subscription for Eps1llon Hub read the content below.',
     embeds: [embed],
     components: [row]
   });
@@ -410,7 +413,7 @@ const commands = [
   // --- NEW: MEDIA PARTNER PANEL -------------------------------------------------
   new SlashCommandBuilder()
     .setName('media-partner')
-    .setDescription('Create the eps1llon hub Media Partnership panel')
+    .setDescription('Create the Eps1llon Hub Media Partnership panel')
     .addChannelOption(o =>
       o
         .setName('target')
@@ -422,7 +425,7 @@ const commands = [
   // --- NEW: RESELLER PARTNER PANEL -------------------------------------------------
   new SlashCommandBuilder()
     .setName('reseller-partner')
-    .setDescription('Create the eps1llon hub Reseller Partnership panel')
+    .setDescription('Create the Eps1llon Hub Reseller Partnership panel')
     .addChannelOption(o =>
       o
         .setName('target')
@@ -451,13 +454,14 @@ client.once(Events.ClientReady, async () => {
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
     if (premiumChannel) {
       const messages = await premiumChannel.messages.fetch({ limit: 5 });
-      const exists = messages.find(m => m.embeds[0]?.title === '💎 eps1llon hub Premium' && m.author.id === client.user.id);
+      const exists = messages.find(m => m.embeds[0]?.title === '💎 Eps1llon Hub Premium' && m.author.id === client.user.id);
       if (!exists) {
         const embed = new EmbedBuilder()
-          .setTitle('💎 eps1llon hub Premium')
+          .setTitle('💎 Eps1llon Hub Premium')
           .setColor('#FFD700')
           .addFields(
-            { name: '💰 Price', value: '$10 / week\n$30 / month', inline: true },
+            { name: '💰 Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true },
+            { name: '💳 Payment Methods', value: 'GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳', inline: true },
             { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
           )
           .setFooter({ text: 'Premium Quality Solution' })
@@ -470,7 +474,7 @@ client.once(Events.ClientReady, async () => {
             .setEmoji('💳')
         );
         await premiumChannel.send({
-          content: 'To purchase a subscription for eps1llon hub read the content below.',
+          content: 'To purchase a subscription for Eps1llon Hub read the content below.',
           embeds: [embed],
           components: [row]
         });
@@ -834,16 +838,16 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetChannel = options.getChannel('target') ?? channel;
 
         const embed = new EmbedBuilder()
-          .setTitle('📣 eps1llon hub – Media Partnership')
+          .setTitle('📣 Eps1llon Hub – Media Partnership')
           .setDescription(
             '**We are looking for content creators & showcase‑ers!**\n' +
-            'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the eps1llon hub script.\n' +
+            'If you have a strong following on TikTok, YouTube, Twitch or any other platform, we want to **showcase your videos** that feature the Eps1llon Hub script.\n' +
             'Successful partners receive **paid collaborations** and **FREE lifetime premium scripts** as soon as they become an official creator.'
           )
           .setColor('#8A2BE2')
           .addFields(
             { name: 'What you get', value: '- Direct payment per successful campaign\n- Free lifetime premium script\n- Early‑access to new features', inline: true },
-            { name: 'What we need', value: '- Minimum **1000** views per video (or equivalent engagement)\n- Honest review & clear mention of eps1llon hub', inline: true }
+            { name: 'What we need', value: '- Minimum **1000** views per video (or equivalent engagement)\n- Honest review & clear mention of Eps1llon Hub', inline: true }
           )
           .setFooter({ text: 'Ready to join? Click the button below!' })
           .setTimestamp();
@@ -866,7 +870,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const targetChannel = options.getChannel('target') ?? channel;
 
         const embed = new EmbedBuilder()
-          .setTitle('📣 eps1llon hub – Reseller Partnership')
+          .setTitle('📣 Eps1llon Hub – Reseller Partnership')
           .setDescription(
             '**We are looking for resellers outside of the United States** (e.g., Dubai, Brazil, etc.).\n' +
             'If you can sell our premium script to customers in your region and handle payments, we want to work with you.'
@@ -941,7 +945,11 @@ client.on(Events.InteractionCreate, async interaction => {
               id,
               allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
             })),
-            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] }
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
+            ...ADDITIONAL_TICKET_ROLES.map(id => ({
+              id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            }))
           ]
         };
         if (category) channelOptions.parent = category.id;
@@ -958,10 +966,10 @@ client.on(Events.InteractionCreate, async interaction => {
             .setStyle(ButtonStyle.Danger)
             .setEmoji('🔒')
         );
-        await ticket.send({ content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')}`, embeds: [panel], components: [row] });
+        await ticket.send({ content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')} ${ADDITIONAL_TICKET_ROLES.map(i => `<@&${i}>`).join(' ')}`, embeds: [panel], components: [row] });
         const info = new EmbedBuilder()
-          .setTitle('💎 eps1llon hub Premium Purchase')
-          .setDescription(`Price: $${PREMIUM_PRICE_WEEK} / week or $${PREMIUM_PRICE_MONTH} / month\nSupported payments: CashApp, Crypto, Gift Cards`)
+          .setTitle('💎 Eps1llon Hub Premium Purchase')
+          .setDescription(`Price: $${PREMIUM_PRICE_LIFETIME} Lifetime\nSupported payments: GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳`)
           .setColor('#FFD700')
           .setTimestamp();
         await ticket.send({ embeds: [info] });
@@ -975,7 +983,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .addFields(
               { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
               { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
-              { name: 'Price', value: `$${PREMIUM_PRICE_WEEK} / week or $${PREMIUM_PRICE_MONTH} / month`, inline: true }
+              { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true }
             )
             .setColor('#FFD700')
             .setTimestamp();
@@ -1089,7 +1097,11 @@ client.on(Events.InteractionCreate, async interaction => {
           { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
           { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
           { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
-          { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
+          { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+          ...ADDITIONAL_TICKET_ROLES.map(id => ({
+            id,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+          }))
         ]
       };
       if (category) channelOptions.parent = category.id;
@@ -1104,7 +1116,7 @@ client.on(Events.InteractionCreate, async interaction => {
         new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
         new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary).setEmoji('📝')
       );
-      await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}>`, embeds: [panel], components: [row] });
+      await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}> ${ADDITIONAL_TICKET_ROLES.map(id => `<@&${id}>`).join(' ')}`, embeds: [panel], components: [row] });
 
       const ticketEmbed = new EmbedBuilder()
         .setTitle(`🎫 Ticket: ${subject}`)
