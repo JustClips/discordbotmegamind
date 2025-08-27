@@ -14,9 +14,9 @@ const {
   ChannelType,
   TextInputStyle,
   ModalBuilder,
-  TextInputBuilder,
   StringSelectMenuBuilder
 } = require('discord.js');
+const axios = require('axios');
 
 /* -------------------------------------------------
    CONFIGURATION
@@ -25,18 +25,19 @@ const MOD_ROLE_ID = process.env.MOD_ROLE_ID || 'YOUR_MOD_ROLE_ID';
 const OWNER_IDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(',').map(id => id.trim()) : [];
 const LOG_CHANNEL_ID = '1404675690007105596';
 const WELCOME_CHANNEL_ID = '1364387827386683484';
-const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || null;          // may be null → no category
+const TICKET_CATEGORY_ID = process.env.TICKET_CATEGORY_ID || null;
 const TICKET_LOGS_CHANNEL_ID = process.env.TICKET_LOGS_CHANNEL_ID || 'YOUR_TICKET_LOGS_CHANNEL_ID';
 const SUPPORT_ROLE_ID = process.env.SUPPORT_ROLE_ID || 'YOUR_SUPPORT_ROLE_ID';
 const PREMIUM_CHANNEL_ID = '1403870367524585482';
-const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;        // may be null → no category
-const APPLICATION_CATEGORY_ID = '1407184066205319189';                     // <-- new constant (same as premium purchase category)
-const PREMIUM_PRICE_LIFETIME = 10;  // $10 lifetime
+const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;
+const APPLICATION_CATEGORY_ID = '1407184066205319189';
+const PREMIUM_PRICE_LIFETIME = 10;
 
 /* NEW CONSTANTS ------------------------------------------------- */
-const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360'; // Updated auto-mod log channel
+const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360';
 const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
-const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;   // role that gets pinged on a new media‑partner application
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY';
 
 // Additional roles that can access tickets (excluding 1396656209821564928)
 const ADDITIONAL_TICKET_ROLES = ['1409618882041352322'];
@@ -68,14 +69,69 @@ const ticketTranscripts = new Map();
 const MUTE_COOLDOWN = 60000;
 
 /* -------------------------------------------------
-   BANNED WORD PATTERNS (profanity / TOS)
+   GEMINI AI MODERATION
    ------------------------------------------------- */
-const BANNED_PATTERNS = [
-  /(?:n[i1!|]gg[ae3r]?)|(?:f[a4@]gg[o0]t?)|(?:ch[i1!|]nk?)|(?:k[i1!|]ke?)|(?:r[e3]t[a4@]rd?)|(?:c[o0]ck)|(?:p[e3]n[i1!|]s)|(?:v[a4@]g[i1!|]n[a4@])|(?:wh[o0]r[e3])|(?:sl[uo0]t)|(?:b[i1!|]tch)|(?:c[uo0]nt)|(?:sh[i1!|]t)|(?:f[uo0]ck)|(?:d[i1!|]ck)|(?:p[o0]rn)|(?:s[e3]x)|(?:n[a4@]ked)|(?:b[o0][o0]bs?)|(?:t[i1!|]ts?)|(?:p[uo0]ssy)|(?:cum)|(?:j[i1!|]zz)|(?:orgy)|(?:g[a4@]ngb[a4@]ng)|(?:p[e3]d[o0])|(?:b[e3][a4@]st[i1!|]al[i1!|]ty)|(?:z[o0][o0]ph[i1!|]l[i1!|]a)|(?:l[o0][o0]t[a4@])|(?:r[a4@]p[e3])|(?:m[o0]l[e3]st[e3])|(?:p[e3]d[e3][s5])|(?:s[a4@]d[i1!|]sm)|(?:m[a4@]st[e3]rb[a4@]t[e3])|(?:b[e3][a4@]n[a4@]n[a4@])|(?:w[a4@]nker)|(?:w[a4@]nk[e3]r)|(?:b[o0][o0]ger)|(?:t[uo0]rd)|(?:sc[uo0]t)|(?:tw[a4@]t)|(?:n[a4@]z[i1!|])|(?:sp[i1!|]c)|(?:g[o0][o0]k)|(?:g[e3]rm[a4@]n)|(?:j[e3]w)|(?:h[o0][o0]k[e3]r)|(?:r[a4@]c[i1!|]st)|(?:n[a4@]z[i1!|])|(?:f[a4@]sc[i1!|]st)|(?:tr[a4@]nn[yi])|(?:dyk[e3])|(?:tr[a4@]ny)|(?:s[h]{2}[i1!|]t[e3])|(?:f[uo0][ck]{2})|(?:b[i1!|]tch[e3]s)|(?:c[o0]cks[uo0]ck[e3]r)|(?:m[o0]th[e3]rf[uo0]ck[e3]r)|(?:f[a4@]gg[o0]t[s5])|(?:n[i1!|]gg[e3]r[s5])|(?:r[e3]t[a4@]rd[e3]d)|(?:c[o0]cks[uo0]ck[i1!|]ng)|(?:m[o0]th[e3]rf[uo0]ck[i1!|]ng)|(?:f[uo0]ck[i1!|]ng)|(?:sh[i1!|]tt[i1!|]ng)|(?:b[i1!|]tch[i1!|]ng)|(?:c[uo0]nt[i1!|]ng)|(?:n[i1!|]gg[e3]r[i1!|]ng)|(?:f[a4@]gg[o0]t[i1!|]ng)|(?:r[e3]t[a4@]rd[i1!|]ng)/gi,
-  /(?:discord\.gg\/[a-zA-Z0-9]+)|(?:bit\.ly\/[a-zA-Z0-9]+)|(?:tinyurl\.com\/[a-zA-Z0-9]+)/gi,
-  /(?:suicid[e3])|(?:kil+ing myself)|(?:end my lif[e3])|(?:want to di[e3])|(?:no on[e3] car[e3]s)|(?:no purpos[e3])|(?:worthl[e3]ss)/gi,
-  /(?:h[e3]il hitl[e3]r)|(?:nazi)|(?:swastika)|(?:kkk)|(?:white pow[e3]r)|(?:rac[e3] war)|(?:genocid[e3])|(?:ethnic cl[e3]ansing)/gi
-];
+async function checkContentWithAI(content, userId) {
+  try {
+    const prompt = `
+You are a Discord moderation AI. Analyze the following message and determine if it violates Discord's Terms of Service.
+Focus on these categories:
+1. Hate speech or discrimination
+2. Harassment or bullying
+3. Illegal activities
+4. Sexual content involving minors
+5. Violent content
+6. Spam or phishing
+7. Self-harm or suicide promotion
+
+Message: "${content}"
+
+Respond ONLY with one of these exact formats:
+- SAFE: [reason]
+- DELETE: [category] - [brief explanation]
+
+Example responses:
+- SAFE: No violations detected
+- DELETE: Hate speech - Contains racial slurs
+- DELETE: Harassment - Threatens violence against users
+`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'SAFE: No response';
+    
+    if (result.startsWith('DELETE:')) {
+      const parts = result.substring(8).split(' - ');
+      const category = parts[0];
+      const explanation = parts.slice(1).join(' - ') || 'Violation detected';
+      return { 
+        detected: true, 
+        category: category, 
+        explanation: explanation,
+        pattern: `AI flagged: ${category}`
+      };
+    }
+    
+    return { detected: false, category: null, explanation: null, pattern: null };
+  } catch (error) {
+    console.error('Gemini API Error:', error.message);
+    return { detected: false, category: null, explanation: null, pattern: null };
+  }
+}
 
 /* -------------------------------------------------
    HELPER FUNCTIONS
@@ -85,16 +141,19 @@ function hasPermission(member) {
   if (member.roles.cache.has(MOD_ROLE_ID)) return true;
   return false;
 }
+
 function canManageRoles(member, targetRole) {
   if (OWNER_IDS.includes(member.id)) return true;
   if (!member.permissions.has(PermissionFlagsBits.ManageRoles)) return false;
   return targetRole.position < member.roles.highest.position;
 }
+
 function canManageMember(member, targetMember) {
   if (OWNER_IDS.includes(member.id)) return true;
   if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
   return member.roles.highest.position > targetMember.roles.highest.position;
 }
+
 function formatTime(seconds) {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -107,6 +166,7 @@ function formatTime(seconds) {
   if (secs) timeString += `${secs}s`;
   return timeString.trim() || '0s';
 }
+
 function calculateWinChance(participants, winners) {
   if (!participants) return '0%';
   if (participants <= winners) return '100%';
@@ -144,6 +204,7 @@ async function logAction(guild, action, user, moderator, reason, duration = null
   if (additionalInfo) embed.addFields({ name: 'Details', value: additionalInfo, inline: false });
   await logChannel.send({ embeds: [embed] });
 }
+
 async function logPhishing(guild, user, message, pattern) {
   const channel = guild.channels.cache.get(PHISHING_LOG_CHANNEL_ID);
   if (!channel) return;
@@ -160,57 +221,27 @@ async function logPhishing(guild, user, message, pattern) {
 }
 
 /* -------------------------------------------------
-   AUTOMOD – TOC / PHISHING DETECTION
+   AUTOMOD – GEMINI AI + BASIC DETECTION
    ------------------------------------------------- */
-function detectToSContent(content) {
+async function detectToSContent(content, userId) {
   const lower = content.toLowerCase();
 
-  // ---- 1️⃣  PROFANITY / TOS WORDS (original list) ----
-  for (const pattern of BANNED_PATTERNS) {
-    if (pattern.test(lower)) return { detected: true, pattern: pattern.toString() };
-  }
-
-  // ---- 2️⃣  URL EXTRACTION ----
-  const urlRegex = /https?:\/\/[^\s]+/gi;
-  const urls = content.match(urlRegex) ?? [];
-
-  // ---- 3️⃣  PHISHING / SCAM PATTERNS ----
-  const PHISH_PATTERNS = [
-    /discord(?:app)?\.com\/(?:invite|gifts?)\/[a-z0-9-]+/i,
-    /(?:bit\.ly|tinyurl\.com|goo\.gl|t\.co|ow\.ly|is\.gd|buff\.ly)\/[^\s]+/i,
-    /free\s*nitro|free\s*discord\s*gift|nitro\s*gift/i,
-    /paypal\.me\/[^\s]+|paypal\.com\/[^\s]*gift|giftcard\.com|giftcards\.com|gift\.co\/[^\s]+/i,
-    /steamcommunity\.com\/tradeoffer\/[^\s]+|steamgifts\.com|g2a\.com\/[^\s]+/i,
-    /(?:gift|code|voucher)[\s-]?(?:free|promo|claim)[\s-]?(?:discord|nitro|steam|paypal)/i,
-    /login\.?[\w-]*\.(?:com|net|org)\/[^\s]*\b(verify|account|security)\b/i,
-    /click\.?[\w-]*\.(?:com|net|org)\/[^\s]+/i,
+  // Basic pattern matching for obvious violations
+  const basicPatterns = [
+    { pattern: /discord\.gg\/[a-zA-Z0-9]+/gi, category: 'Spam/Phishing', reason: 'Discord invite link' },
+    { pattern: /(kys|kill yourself)/gi, category: 'Self-harm', reason: 'Self-harm promotion' },
+    { pattern: /n[i1!|]gg[ae3r]/gi, category: 'Hate speech', reason: 'Racial slur' },
+    { pattern: /f[a4@]gg[o0]t/gi, category: 'Hate speech', reason: 'Homophobic slur' }
   ];
 
-  for (const pattern of PHISH_PATTERNS) {
-    if (pattern.test(lower)) return { detected: true, pattern: pattern.toString() };
+  for (const { pattern, category, reason } of basicPatterns) {
+    if (pattern.test(lower)) {
+      return { detected: true, category, explanation: reason, pattern: reason };
+    }
   }
 
-  // ---- 4️⃣  SHORTENER QUICK DETECTION ----
-  const shortenerMap = {
-    'bit.ly': true,
-    'tinyurl.com': true,
-    'goo.gl': true,
-    't.co': true,
-    'ow.ly': true,
-    'is.gd': true,
-    'buff.ly': true,
-  };
-  for (const url of urls) {
-    try {
-      const hostname = new URL(url).hostname.replace('www.', '');
-      if (shortenerMap[hostname]) {
-        return { detected: true, pattern: `shortener:${hostname}` };
-      }
-    } catch (_) {}
-  }
-
-  // ---- 5️⃣  NO PROBLEM FOUND ----
-  return { detected: false, pattern: null };
+  // If no basic patterns match, use AI for deeper analysis
+  return await checkContentWithAI(content, userId);
 }
 
 /* -------------------------------------------------
@@ -248,6 +279,7 @@ async function closeTicket(interaction, ticketData) {
     } catch {}
   }, 10000);
 }
+
 async function sendTranscript(interaction, ticketData) {
   const transcript = ticketTranscripts.get(interaction.channel.id) || [];
   if (!transcript.length)
@@ -275,7 +307,6 @@ async function sendPremiumAd(interaction) {
     .setTitle('💎 Eps1llon Hub Premium')
     .setDescription('Unlock the ultimate experience with our premium script.')
     .setColor('#FFD700')
-    .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
     .addFields(
       { 
         name: '💰 Lifetime Price', 
@@ -312,148 +343,120 @@ async function sendPremiumAd(interaction) {
 }
 
 /* -------------------------------------------------
-   COMMAND DEFINITIONS (no .toJSON() here)
+   COMMAND DEFINITIONS
    ------------------------------------------------- */
 const commands = [
-  // --- MODERATION -------------------------------------------------
   new SlashCommandBuilder()
     .setName('mute')
     .setDescription('Mute a user')
     .addUserOption(o => o.setName('user').setDescription('User to mute').setRequired(true))
     .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(false))
     .addStringOption(o => o.setName('reason').setDescription('Reason for mute').setRequired(false)),
+  
   new SlashCommandBuilder()
     .setName('unmute')
     .setDescription('Unmute a user')
     .addUserOption(o => o.setName('user').setDescription('User to unmute').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason for unmute').setRequired(false)),
+  
   new SlashCommandBuilder()
     .setName('warn')
     .setDescription('Warn a user')
     .addUserOption(o => o.setName('user').setDescription('User to warn').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason for warning').setRequired(true)),
+  
   new SlashCommandBuilder()
     .setName('warnings')
     .setDescription('View warnings for a user')
     .addUserOption(o => o.setName('user').setDescription('User to check').setRequired(false)),
+  
   new SlashCommandBuilder()
     .setName('clearwarns')
     .setDescription('Clear all warnings for a user')
     .addUserOption(o => o.setName('user').setDescription('User to clear warnings for').setRequired(true)),
+  
   new SlashCommandBuilder()
     .setName('purge')
     .setDescription('Delete messages')
     .addIntegerOption(o => o.setName('amount').setDescription('Number of messages (1-500)').setRequired(true).setMinValue(1).setMaxValue(500))
     .addUserOption(o => o.setName('user').setDescription('Only delete messages from this user').setRequired(false)),
+  
   new SlashCommandBuilder().setName('purgebots').setDescription('Delete messages from bots only'),
   new SlashCommandBuilder().setName('purgehumans').setDescription('Delete messages from humans only'),
   new SlashCommandBuilder().setName('purgeall').setDescription('Delete all messages in channel'),
+  
   new SlashCommandBuilder()
     .setName('lock')
     .setDescription('Lock a channel')
     .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes (0 = permanent)').setRequired(false))
     .addStringOption(o => o.setName('reason').setDescription('Reason for locking').setRequired(false)),
+  
   new SlashCommandBuilder().setName('unlock').setDescription('Unlock a channel'),
+  
   new SlashCommandBuilder()
     .setName('slowmode')
     .setDescription('Set slowmode for channel')
     .addIntegerOption(o => o.setName('seconds').setDescription('Seconds between messages').setRequired(true).setMinValue(0).setMaxValue(21600)),
+  
   new SlashCommandBuilder()
     .setName('role')
     .setDescription('Manage roles')
-    .addSubcommand(s =>
-      s
-        .setName('add')
-        .setDescription('Add a role to a user')
-        .addUserOption(o => o.setName('user').setDescription('User to add role to').setRequired(true))
-        .addRoleOption(o => o.setName('role').setDescription('Role to add').setRequired(true))
-    )
-    .addSubcommand(s =>
-      s
-        .setName('remove')
-        .setDescription('Remove a role from a user')
-        .addUserOption(o => o.setName('user').setDescription('User to remove role from').setRequired(true))
-        .addRoleOption(o => o.setName('role').setDescription('Role to remove').setRequired(true))
-    )
-    .addSubcommand(s =>
-      s
-        .setName('info')
-        .setDescription('Get information about a role')
-        .addRoleOption(o => o.setName('role').setDescription('Role to get info for').setRequired(true))
-    ),
+    .addSubcommand(s => s.setName('add').setDescription('Add a role to a user')
+      .addUserOption(o => o.setName('user').setDescription('User to add role to').setRequired(true))
+      .addRoleOption(o => o.setName('role').setDescription('Role to add').setRequired(true)))
+    .addSubcommand(s => s.setName('remove').setDescription('Remove a role from a user')
+      .addUserOption(o => o.setName('user').setDescription('User to remove role from').setRequired(true))
+      .addRoleOption(o => o.setName('role').setDescription('Role to remove').setRequired(true)))
+    .addSubcommand(s => s.setName('info').setDescription('Get information about a role')
+      .addRoleOption(o => o.setName('role').setDescription('Role to get info for').setRequired(true))),
+  
   new SlashCommandBuilder()
     .setName('giverole')
     .setDescription('Give a role to a user')
     .addUserOption(o => o.setName('user').setDescription('User to give role to').setRequired(true))
     .addRoleOption(o => o.setName('role').setDescription('Role to give').setRequired(true)),
+  
   new SlashCommandBuilder().setName('membercount').setDescription('Show current member count'),
   new SlashCommandBuilder().setName('onlinecount').setDescription('Show online member count'),
-
-  // --- GIVEAWAY -------------------------------------------------
+  
   new SlashCommandBuilder()
     .setName('giveaway')
     .setDescription('Manage giveaways')
-    .addSubcommand(s =>
-      s
-        .setName('create')
-        .setDescription('Create a new giveaway')
-        .addStringOption(o => o.setName('prize').setDescription('Prize to giveaway').setRequired(true))
-        .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(1440))
-        .addIntegerOption(o => o.setName('winners').setDescription('Number of winners (default: 1)').setRequired(false).setMinValue(1).setMaxValue(100))
-    ),
-
-  // --- TICKETS -------------------------------------------------
+    .addSubcommand(s => s.setName('create').setDescription('Create a new giveaway')
+      .addStringOption(o => o.setName('prize').setDescription('Prize to giveaway').setRequired(true))
+      .addIntegerOption(o => o.setName('duration').setDescription('Duration in minutes').setRequired(true).setMinValue(1).setMaxValue(1440))
+      .addIntegerOption(o => o.setName('winners').setDescription('Number of winners (default: 1)').setRequired(false).setMinValue(1).setMaxValue(100))),
+  
   new SlashCommandBuilder()
     .setName('ticket')
     .setDescription('Manage tickets')
     .addSubcommand(s => s.setName('create').setDescription('Create a new ticket'))
     .addSubcommand(s => s.setName('close').setDescription('Close current ticket'))
-    .addSubcommand(s =>
-      s
-        .setName('add')
-        .setDescription('Add a user to ticket')
-        .addUserOption(o => o.setName('user').setDescription('User to add').setRequired(true))
-    )
-    .addSubcommand(s =>
-      s
-        .setName('remove')
-        .setDescription('Remove a user from ticket')
-        .addUserOption(o => o.setName('user').setDescription('User to remove').setRequired(true))
-    )
+    .addSubcommand(s => s.setName('add').setDescription('Add a user to ticket')
+      .addUserOption(o => o.setName('user').setDescription('User to add').setRequired(true)))
+    .addSubcommand(s => s.setName('remove').setDescription('Remove a user from ticket')
+      .addUserOption(o => o.setName('user').setDescription('User to remove').setRequired(true)))
     .addSubcommand(s => s.setName('claim').setDescription('Claim a ticket'))
     .addSubcommand(s => s.setName('unclaim').setDescription('Unclaim a ticket'))
     .addSubcommand(s => s.setName('transcript').setDescription('Get ticket transcript')),
-
-  // --- PREMIUM AD -------------------------------------------------
+  
   new SlashCommandBuilder().setName('premium').setDescription('Display premium script advertisement'),
-
-  // --- NEW: MEDIA PARTNER PANEL -------------------------------------------------
+  
   new SlashCommandBuilder()
     .setName('media-partner')
     .setDescription('Create the Eps1llon Hub Media Partnership panel')
-    .addChannelOption(o =>
-      o
-        .setName('target')
-        .setDescription('Channel where the panel should be posted')
-        .setRequired(false)
-        .addChannelTypes(ChannelType.GuildText)
-    ),
-
-  // --- NEW: RESELLER PARTNER PANEL -------------------------------------------------
+    .addChannelOption(o => o.setName('target').setDescription('Channel where the panel should be posted')
+      .setRequired(false).addChannelTypes(ChannelType.GuildText)),
+  
   new SlashCommandBuilder()
     .setName('reseller-partner')
     .setDescription('Create the Eps1llon Hub Reseller Partnership panel')
-    .addChannelOption(o =>
-      o
-        .setName('target')
-        .setDescription('Channel where the panel should be posted')
-        .setRequired(false)
-        .addChannelTypes(ChannelType.GuildText)
-    )
+    .addChannelOption(o => o.setName('target').setDescription('Channel where the panel should be posted')
+      .setRequired(false).addChannelTypes(ChannelType.GuildText))
 ];
 
 /* -------------------------------------------------
-   REST (register commands) – convert to JSON here
+   REST (register commands)
    ------------------------------------------------- */
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
@@ -467,7 +470,7 @@ client.once(Events.ClientReady, async () => {
       body: commands.map(c => c.toJSON())
     });
 
-    // Ensure the premium ad is present (unchanged)
+    // Ensure the premium ad is present
     const premiumChannel = client.channels.cache.get(PREMIUM_CHANNEL_ID);
     if (premiumChannel) {
       const messages = await premiumChannel.messages.fetch({ limit: 5 });
@@ -477,7 +480,6 @@ client.once(Events.ClientReady, async () => {
           .setTitle('💎 Eps1llon Hub Premium')
           .setDescription('Unlock the ultimate experience with our premium script.')
           .setColor('#FFD700')
-          .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
           .addFields(
             { 
               name: '💰 Lifetime Price', 
@@ -519,34 +521,21 @@ client.once(Events.ClientReady, async () => {
 });
 
 /* -------------------------------------------------
-   INTERACTION CREATE (commands, buttons, modals)
+   INTERACTION CREATE
    ------------------------------------------------- */
 client.on(Events.InteractionCreate, async interaction => {
-  /* ---------- SLASH COMMANDS ---------- */
   if (interaction.isChatInputCommand()) {
     const { commandName, options, member, channel, guild } = interaction;
     const modCommands = [
-      'mute',
-      'unmute',
-      'warn',
-      'warnings',
-      'clearwarns',
-      'purge',
-      'purgebots',
-      'purgehumans',
-      'purgeall',
-      'lock',
-      'unlock',
-      'slowmode',
-      'role',
-      'giverole'
+      'mute', 'unmute', 'warn', 'warnings', 'clearwarns', 'purge', 'purgebots', 
+      'purgehumans', 'purgeall', 'lock', 'unlock', 'slowmode', 'role', 'giverole'
     ];
+    
     if (modCommands.includes(commandName) && !hasPermission(member)) {
       return interaction.reply({ content: '❌ You don\'t have permission to use this command!', ephemeral: true });
     }
 
     try {
-      /* ----- MODERATION COMMANDS (unchanged) ----- */
       if (commandName === 'mute') {
         const user = options.getUser('user');
         const duration = options.getInteger('duration') || 10;
@@ -826,7 +815,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
         const data = tickets.get(interaction.channel.id);
         if (sub === 'create') {
-          // Handled by button – nothing needed here
+          // Handled by button
         } else if (sub === 'close') {
           if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           await closeTicket(interaction, data);
@@ -864,7 +853,6 @@ client.on(Events.InteractionCreate, async interaction => {
       } else if (commandName === 'premium') {
         await sendPremiumAd(interaction);
       } else if (commandName === 'media-partner') {
-        /* ---------- NEW COMMAND ---------- */
         if (!hasPermission(member)) {
           return interaction.reply({ content: '❌ You don\'t have permission to create the media‑partner panel.', ephemeral: true });
         }
@@ -896,7 +884,6 @@ client.on(Events.InteractionCreate, async interaction => {
         await targetChannel.send({ embeds: [embed], components: [row] });
         await interaction.reply({ content: `✅ Media‑partner panel posted in <#${targetChannel.id}>`, ephemeral: true });
       } else if (commandName === 'reseller-partner') {
-        /* ---------- NEW RESELLER COMMAND ---------- */
         if (!hasPermission(member)) {
           return interaction.reply({ content: '❌ You don\'t have permission to create the reseller‑partner panel.', ephemeral: true });
         }
@@ -929,10 +916,10 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     } catch (e) {
       console.error(e);
-      if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: '❌ Command error.', ephemeral: true });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ Command error.', ephemeral: true });
+      }
     }
-
-  /* ---------- BUTTON INTERACTIONS ---------- */
   } else if (interaction.isButton()) {
     if (interaction.customId === 'create_ticket') {
       const modal = new ModalBuilder()
@@ -965,7 +952,6 @@ client.on(Events.InteractionCreate, async interaction => {
       giveaways.set(interaction.message.id, data);
       await interaction.reply({ content: '🎉 Joined giveaway!', ephemeral: true });
     } else if (interaction.customId === 'purchase_premium') {
-      /* ----- PREMIUM PURCHASE (price text updated) ----- */
       try {
         const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
         const channelOptions = {
@@ -1049,14 +1035,13 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
       await sendTranscript(interaction, data);
     } else if (interaction.customId === 'media_apply') {
-      /* ---------- MEDIA‑PARTNER APPLICATION MODAL ---------- */
       const modal = new ModalBuilder()
         .setCustomId('media_application')
         .setTitle('Media Partnership Application');
 
       const platform = new TextInputBuilder()
         .setCustomId('media_platform')
-        .setLabel('Platform(s) (TikTok, YouTube, etc.)')   // ≤45 chars
+        .setLabel('Platform(s) (TikTok, YouTube, etc.)')
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('e.g. TikTok, YouTube')
         .setRequired(true)
@@ -1077,14 +1062,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.showModal(modal);
     } else if (interaction.customId === 'reseller_apply') {
-      /* ---------- RESELLER APPLICATION MODAL ---------- */
       const modal = new ModalBuilder()
         .setCustomId('reseller_application')
         .setTitle('Reseller Partnership Application');
 
       const payment = new TextInputBuilder()
         .setCustomId('reseller_payment')
-        .setLabel('Payment methods you accept')   // ≤45 chars
+        .setLabel('Payment methods you accept')
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('PayPal, crypto, bank transfer, etc.')
         .setRequired(true)
@@ -1092,7 +1076,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const availability = new TextInputBuilder()
         .setCustomId('reseller_availability')
-        .setLabel('Always online / ready to sell?')   // ≤45 chars
+        .setLabel('Always online / ready to sell?')
         .setStyle(TextInputStyle.Short)
         .setPlaceholder('Yes / No – typical response time')
         .setRequired(true)
@@ -1100,7 +1084,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const experience = new TextInputBuilder()
         .setCustomId('reseller_experience')
-        .setLabel('Past reseller experience / store link')   // ≤45 chars
+        .setLabel('Past reseller experience / store link')
         .setStyle(TextInputStyle.Paragraph)
         .setPlaceholder('e.g., https://myshop.com …')
         .setRequired(false)
@@ -1114,10 +1098,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.showModal(modal);
     }
-  }
-
-  /* ---------- MODAL SUBMITS ---------- */
-  else if (interaction.isModalSubmit()) {
+  } else if (interaction.isModalSubmit()) {
     if (interaction.customId === 'ticket_modal') {
       await interaction.deferReply({ ephemeral: true });
       const subject = interaction.fields.getTextInputValue('ticket_subject');
@@ -1186,7 +1167,6 @@ client.on(Events.InteractionCreate, async interaction => {
       const platform = interaction.fields.getTextInputValue('media_platform');
       const link = interaction.fields.getTextInputValue('media_link');
 
-      // ---- CREATE APPLICATION CHANNEL ----
       const channelOptions = {
         name: `media-${interaction.user.username}`.toLowerCase(),
         type: ChannelType.GuildText,
@@ -1230,7 +1210,6 @@ client.on(Events.InteractionCreate, async interaction => {
       const availability = interaction.fields.getTextInputValue('reseller_availability');
       const experience = interaction.fields.getTextInputValue('reseller_experience');
 
-      // ---- CREATE APPLICATION CHANNEL ----
       const channelOptions = {
         name: `reseller-${interaction.user.username}`.toLowerCase(),
         type: ChannelType.GuildText,
@@ -1274,7 +1253,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 /* -------------------------------------------------
-   MESSAGE CREATE (auto‑mod + ticket transcript)
+   MESSAGE CREATE (AI auto-moderation)
    ------------------------------------------------- */
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
@@ -1288,34 +1267,41 @@ client.on(Events.MessageCreate, async message => {
     ticketTranscripts.set(message.channel.id, arr);
   }
 
-  // Auto‑mod detection
-  const result = detectToSContent(message.content);
+  // AI-powered auto-moderation
+  const result = await detectToSContent(message.content, message.author.id);
   if (result.detected) {
     try {
       const deleted = message.content;
       await message.delete();
-      await message.author.send(`❌ Your message was removed for violating Discord's Terms of Service.\n**Content:** ${deleted.substring(0, 1000)}`);
+      
+      // Send DM to user
+      await message.author.send(`❌ Your message was removed for violating Discord's Terms of Service.\n**Category:** ${result.category}\n**Content:** ${deleted.substring(0, 1000)}`);
+      
+      // Apply strikes system
       const strikes = (userStrikes.get(message.author.id) || 0) + 1;
       userStrikes.set(message.author.id, strikes);
+      
       if (strikes >= 3) {
         const target = await message.guild.members.fetch(message.author.id);
         if (target && target.moderatable) {
-          await target.timeout(30 * 60 * 1000, '3 strikes - auto mute');
-          await message.channel.send(`🔇 <@${message.author.id}> auto‑muted for 30 minutes.`);
-          await logAction(message.guild, 'mute', message.author, client.user, 'Auto‑mute after 3 strikes', 30 * 60, `Deleted: ${deleted.substring(0, 500)}`);
+          await target.timeout(30 * 60 * 1000, `Auto-mute after 3 strikes (${result.category})`);
+          await message.channel.send(`🔇 <@${message.author.id}> auto-muted for 30 minutes.`);
+          await logAction(message.guild, 'mute', message.author, client.user, `Auto-mute after 3 strikes (${result.category})`, 30 * 60, `Deleted: ${deleted.substring(0, 500)}`);
         }
         userStrikes.set(message.author.id, 0);
       } else {
-        await message.channel.send(`⚠️ <@${message.author.id}> message removed. Strikes: ${strikes}/3`);
+        await message.channel.send(`⚠️ <@${message.author.id}> message removed (${result.category}). Strikes: ${strikes}/3`);
       }
-      await logAction(message.guild, 'automod', message.author, client.user, 'ToS violation', null, `Deleted: ${deleted.substring(0, 500)}`);
+      
+      // Log the action
+      await logAction(message.guild, 'automod', message.author, client.user, result.category, null, `Deleted: ${deleted.substring(0, 500)}`);
       await logPhishing(message.guild, message.author, deleted, result.pattern);
     } catch (_) {}
   }
 });
 
 /* -------------------------------------------------
-   GUILD MEMBER LOGS (join/leave)
+   GUILD MEMBER LOGS
    ------------------------------------------------- */
 client.on(Events.GuildMemberAdd, async member => {
   const welcome = member.guild.channels.cache.get(WELCOME_CHANNEL_ID);
