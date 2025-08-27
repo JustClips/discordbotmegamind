@@ -38,8 +38,8 @@ const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '14104003
 const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;   // role that gets pinged on a new media‑partner application
 
-// Additional roles that can access tickets
-const ADDITIONAL_TICKET_ROLES = ['1409618882041352322', '1396656209821564928'];
+// Additional roles that can access tickets (excluding 1396656209821564928)
+const ADDITIONAL_TICKET_ROLES = ['1409618882041352322'];
 
 /* -------------------------------------------------
    CLIENT & GLOBAL MAPS
@@ -270,16 +270,32 @@ async function sendTranscript(interaction, ticketData) {
 async function sendPremiumAd(interaction) {
   if (interaction.channel.id !== PREMIUM_CHANNEL_ID && !OWNER_IDS.includes(interaction.user.id))
     return interaction.reply({ content: '❌ This command can only be used in the premium channel!', ephemeral: true });
+  
   const embed = new EmbedBuilder()
     .setTitle('💎 Eps1llon Hub Premium')
+    .setDescription('Unlock the ultimate experience with our premium script.')
     .setColor('#FFD700')
+    .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
     .addFields(
-      { name: '💰 Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true },
-      { name: '💳 Payment Methods', value: 'GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳', inline: true },
-      { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
+      { 
+        name: '💰 Lifetime Price', 
+        value: `$${PREMIUM_PRICE_LIFETIME}`, 
+        inline: true 
+      },
+      { 
+        name: '💳 Payment Methods', 
+        value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle', 
+        inline: true 
+      },
+      { 
+        name: '🔒 Premium Benefits', 
+        value: '• Lifetime Updates\n• Priority Support\n• Exclusive Features\n• Early Access', 
+        inline: true 
+      }
     )
-    .setFooter({ text: 'Premium Quality Solution' })
+    .setFooter({ text: 'Premium Quality Solution • Lifetime Access' })
     .setTimestamp();
+  
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('purchase_premium')
@@ -287,8 +303,9 @@ async function sendPremiumAd(interaction) {
       .setStyle(ButtonStyle.Success)
       .setEmoji('💳')
   );
+  
   await interaction.reply({
-    content: 'To purchase a subscription for Eps1llon Hub read the content below.',
+    content: '## 🌟 Upgrade to Eps1llon Hub Premium',
     embeds: [embed],
     components: [row]
   });
@@ -458,14 +475,29 @@ client.once(Events.ClientReady, async () => {
       if (!exists) {
         const embed = new EmbedBuilder()
           .setTitle('💎 Eps1llon Hub Premium')
+          .setDescription('Unlock the ultimate experience with our premium script.')
           .setColor('#FFD700')
+          .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
           .addFields(
-            { name: '💰 Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true },
-            { name: '💳 Payment Methods', value: 'GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳', inline: true },
-            { name: '🔒 Security', value: 'Lifetime Updates & Support', inline: true }
+            { 
+              name: '💰 Lifetime Price', 
+              value: `$${PREMIUM_PRICE_LIFETIME}`, 
+              inline: true 
+            },
+            { 
+              name: '💳 Payment Methods', 
+              value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle', 
+              inline: true 
+            },
+            { 
+              name: '🔒 Premium Benefits', 
+              value: '• Lifetime Updates\n• Priority Support\n• Exclusive Features\n• Early Access', 
+              inline: true 
+            }
           )
-          .setFooter({ text: 'Premium Quality Solution' })
+          .setFooter({ text: 'Premium Quality Solution • Lifetime Access' })
           .setTimestamp();
+        
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId('purchase_premium')
@@ -473,8 +505,9 @@ client.once(Events.ClientReady, async () => {
             .setStyle(ButtonStyle.Success)
             .setEmoji('💳')
         );
+        
         await premiumChannel.send({
-          content: 'To purchase a subscription for Eps1llon Hub read the content below.',
+          content: '## 🌟 Upgrade to Eps1llon Hub Premium',
           embeds: [embed],
           components: [row]
         });
@@ -833,7 +866,7 @@ client.on(Events.InteractionCreate, async interaction => {
       } else if (commandName === 'media-partner') {
         /* ---------- NEW COMMAND ---------- */
         if (!hasPermission(member)) {
-          return interaction.reply({ content: '❌ You don’t have permission to create the media‑partner panel.', ephemeral: true });
+          return interaction.reply({ content: '❌ You don\'t have permission to create the media‑partner panel.', ephemeral: true });
         }
         const targetChannel = options.getChannel('target') ?? channel;
 
@@ -865,7 +898,7 @@ client.on(Events.InteractionCreate, async interaction => {
       } else if (commandName === 'reseller-partner') {
         /* ---------- NEW RESELLER COMMAND ---------- */
         if (!hasPermission(member)) {
-          return interaction.reply({ content: '❌ You don’t have permission to create the reseller‑partner panel.', ephemeral: true });
+          return interaction.reply({ content: '❌ You don\'t have permission to create the reseller‑partner panel.', ephemeral: true });
         }
         const targetChannel = options.getChannel('target') ?? channel;
 
@@ -969,7 +1002,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await ticket.send({ content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')} ${ADDITIONAL_TICKET_ROLES.map(i => `<@&${i}>`).join(' ')}`, embeds: [panel], components: [row] });
         const info = new EmbedBuilder()
           .setTitle('💎 Eps1llon Hub Premium Purchase')
-          .setDescription(`Price: $${PREMIUM_PRICE_LIFETIME} Lifetime\nSupported payments: GooglePay 🟢, Apple Pay 🍎, CashApp 💵, Crypto ₿, PIX 🇧🇷, PayPal 🅿️, Venmo 🟣, Zelle 💳`)
+          .setDescription(`**Price:** $${PREMIUM_PRICE_LIFETIME} (Lifetime)\n\n**Accepted Payment Methods:**\n• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle`)
           .setColor('#FFD700')
           .setTimestamp();
         await ticket.send({ embeds: [info] });
