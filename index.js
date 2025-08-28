@@ -97,6 +97,29 @@ async function createTables() {
       is_active BOOLEAN DEFAULT TRUE,
       INDEX idx_user_id (user_id),
       INDEX idx_script_key (script_key)
+    )`,
+    
+    // Reseller Keys Table
+    `CREATE TABLE IF NOT EXISTS reseller_keys (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      reseller_id VARCHAR(255) NOT NULL,
+      reseller_username VARCHAR(255) NOT NULL,
+      script_key VARCHAR(255) UNIQUE NOT NULL,
+      is_used BOOLEAN DEFAULT FALSE,
+      used_by VARCHAR(255) NULL,
+      used_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_reseller_id (reseller_id),
+      INDEX idx_script_key (script_key),
+      INDEX idx_is_used (is_used)
+    )`,
+    
+    // Reseller Stock Table
+    `CREATE TABLE IF NOT EXISTS reseller_stock (
+      reseller_id VARCHAR(255) PRIMARY KEY,
+      username VARCHAR(255) NOT NULL,
+      stock_count INT DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`
   ];
   
@@ -280,6 +303,100 @@ async function userHasPremiumKey(userId) {
   return rows.length > 0;
 }
 
+// Reseller Key Functions
+function generateResellerKey() {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  const keyLength = 20;
+  
+  for (let i = 0; i < keyLength; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  
+  // Add dashes for better readability
+  return result.match(/.{1,5}/g).join('-');
+}
+
+async function createResellerStock(resellerId, username) {
+  const [result] = await db.execute(
+    'INSERT INTO reseller_stock (reseller_id, username, stock_count) VALUES (?, ?, 0) ON DUPLICATE KEY UPDATE username = ?',
+    [resellerId, username, username]
+  );
+  return result;
+}
+
+async function getResellerStock(resellerId) {
+  const [rows] = await db.execute('SELECT * FROM reseller_stock WHERE reseller_id = ?', [resellerId]);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function updateResellerStock(resellerId, newCount) {
+  const [result] = await db.execute(
+    'UPDATE reseller_stock SET stock_count = ? WHERE reseller_id = ?',
+    [newCount, resellerId]
+  );
+  return result;
+}
+
+async function addResellerStock(resellerId, username, count) {
+  await createResellerStock(resellerId, username);
+  const [result] = await db.execute(
+    'UPDATE reseller_stock SET stock_count = stock_count + ? WHERE reseller_id = ?',
+    [count, resellerId]
+  );
+  return result;
+}
+
+async function generateResellerKeyDB(resellerId, username) {
+  const scriptKey = generateResellerKey();
+  const [result] = await db.execute(
+    'INSERT INTO reseller_keys (reseller_id, reseller_username, script_key) VALUES (?, ?, ?)',
+    [resellerId, username, scriptKey]
+  );
+  return { key: scriptKey, result };
+}
+
+async function getResellerKeys(resellerId) {
+  const [rows] = await db.execute(
+    'SELECT * FROM reseller_keys WHERE reseller_id = ? AND is_used = FALSE ORDER BY created_at DESC',
+    [resellerId]
+  );
+  return rows;
+}
+
+async function giftResellerKeyDB(resellerId, recipientId, recipientUsername) {
+  // Get an unused key from reseller
+  const [keys] = await db.execute(
+    'SELECT * FROM reseller_keys WHERE reseller_id = ? AND is_used = FALSE LIMIT 1',
+    [resellerId]
+  );
+  
+  if (keys.length === 0) {
+    return { success: false, message: 'No keys available in your stock' };
+  }
+  
+  const keyData = keys[0];
+  
+  // Mark key as used
+  await db.execute(
+    'UPDATE reseller_keys SET is_used = TRUE, used_by = ?, used_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [recipientId, keyData.id]
+  );
+  
+  // Decrease reseller stock
+  await db.execute(
+    'UPDATE reseller_stock SET stock_count = stock_count - 1 WHERE reseller_id = ?',
+    [resellerId]
+  );
+  
+  return { 
+    success: true, 
+    key: keyData.script_key,
+    recipientId,
+    recipientUsername
+  };
+}
+
 /* -------------------------------------------------
    CONFIGURATION
    ------------------------------------------------- */
@@ -295,6 +412,7 @@ const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;
 const APPLICATION_CATEGORY_ID = '1407184066205319189';
 const PREMIUM_PRICE_LIFETIME = 10;
 const PREMIUM_ROLE_ID = '1405035087703183492'; // Role that can generate keys
+const RESSELLER_ROLE_ID = '1409618882041352322'; // Reseller role
 
 /* NEW CONSTANTS ------------------------------------------------- */
 const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360';
@@ -728,7 +846,37 @@ const commands = [
        .setDescription('Generate your premium script key (lifetime)'))
     .addSubcommand(s => 
       s.setName('view')
-       .setDescription('View your premium script key information'))
+       .setDescription('View your premium script key information')),
+  
+  // Reseller Panel Command
+  new SlashCommandBuilder()
+    .setName('reseller')
+    .setDescription('Reseller panel for key management')
+    .addSubcommand(s => 
+      s.setName('panel')
+       .setDescription('Open reseller management panel'))
+    .addSubcommand(s => 
+      s.setName('addstock')
+       .setDescription('Add stock to reseller (admin only)')
+       .addUserOption(o => o.setName('reseller').setDescription('Reseller user').setRequired(true))
+       .addIntegerOption(o => o.setName('amount').setDescription('Number of keys to add').setRequired(true)))
+    .addSubcommand(s => 
+      s.setName('stock')
+       .setDescription('View your current stock'))
+    .addSubcommand(s => 
+      s.setName('generate')
+       .setDescription('Generate a key from your stock')
+       .addIntegerOption(o => o.setName('amount').setDescription('Number of keys to generate (default: 1)').setRequired(false)))
+    .addSubcommand(s => 
+      s.setName('gift')
+       .setDescription('Gift a key to a user')
+       .addUserOption(o => o.setName('user').setDescription('User to gift key to').setRequired(true)))
+    .addSubcommand(s => 
+      s.setName('keys')
+       .setDescription('View your generated keys'))
+    .addSubcommand(s => 
+      s.setName('help')
+       .setDescription('Show reseller help information'))
 ];
 
 /* -------------------------------------------------
@@ -1308,6 +1456,326 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
       }
+      else if (commandName === 'reseller') {
+        const subcommand = options.getSubcommand();
+        
+        // Check if user has the reseller role
+        if (!member.roles.cache.has(RESSELLER_ROLE_ID) && subcommand !== 'addstock' && subcommand !== 'help') {
+          return interaction.reply({ 
+            content: '❌ You do not have permission to use this command. You need the reseller role.', 
+            ephemeral: true 
+          });
+        }
+        
+        if (subcommand === 'panel') {
+          const stock = await getResellerStock(member.id);
+          const keys = await getResellerKeys(member.id);
+          
+          const embed = new EmbedBuilder()
+            .setTitle('🏪 Eps1llon Hub Reseller Panel')
+            .setDescription('Manage your reseller keys and stock')
+            .setColor('#00FF00')
+            .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your reseller icon here
+            .addFields(
+              { name: '👤 Reseller', value: `${member.user.tag}\n(<@${member.id}>)`, inline: false },
+              { name: '📦 Current Stock', value: stock ? `${stock.stock_count} keys` : '0 keys', inline: true },
+              { name: '🔑 Available Keys', value: `${keys.length} keys`, inline: true },
+              { name: '📊 Total Generated', value: 'View with `/reseller keys`', inline: true }
+            )
+            .setFooter({ text: 'Eps1llon Hub Reseller System' })
+            .setTimestamp();
+          
+          const row = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('reseller_generate')
+                .setLabel('Generate Key')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔑'),
+              new ButtonBuilder()
+                .setCustomId('reseller_gift')
+                .setLabel('Gift Key')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('🎁'),
+              new ButtonBuilder()
+                .setCustomId('reseller_stock')
+                .setLabel('View Stock')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('📦'),
+              new ButtonBuilder()
+                .setCustomId('reseller_keys')
+                .setLabel('My Keys')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('📋')
+            );
+          
+          await interaction.reply({ 
+            embeds: [embed], 
+            components: [row],
+            ephemeral: true 
+          });
+        }
+        else if (subcommand === 'addstock') {
+          // Admin only command
+          if (!OWNER_IDS.includes(member.id)) {
+            return interaction.reply({ 
+              content: '❌ Only bot owners can add stock to resellers.', 
+              ephemeral: true 
+            });
+          }
+          
+          const reseller = options.getUser('reseller');
+          const amount = options.getInteger('amount');
+          
+          if (amount <= 0) {
+            return interaction.reply({ 
+              content: '❌ Amount must be greater than 0.', 
+              ephemeral: true 
+            });
+          }
+          
+          try {
+            const resellerMember = await guild.members.fetch(reseller.id);
+            await addResellerStock(reseller.id, resellerMember.user.tag, amount);
+            
+            const embed = new EmbedBuilder()
+              .setTitle('✅ Stock Added Successfully')
+              .setDescription(`Added ${amount} keys to ${reseller.tag}'s stock`)
+              .setColor('#00FF00')
+              .addFields(
+                { name: '👤 Reseller', value: `${reseller.tag}\n(<@${reseller.id}>)`, inline: true },
+                { name: '📦 Amount Added', value: `${amount} keys`, inline: true },
+                { name: '📅 Timestamp', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+              )
+              .setTimestamp();
+            
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            
+            // Notify the reseller
+            try {
+              await reseller.send({
+                embeds: [
+                  new EmbedBuilder()
+                    .setTitle('📦 New Stock Added')
+                    .setDescription(`You have received ${amount} new keys from the admin team!`)
+                    .setColor('#00FF00')
+                    .addFields(
+                      { name: '📦 Current Stock', value: `${(await getResellerStock(reseller.id))?.stock_count || 0} keys`, inline: true },
+                      { name: '👤 Added By', value: `${member.user.tag}`, inline: true }
+                    )
+                    .setTimestamp()
+                ]
+              });
+            } catch (e) {
+              // Ignore if DM fails
+            }
+          } catch (error) {
+            console.error('Error adding reseller stock:', error);
+            await interaction.reply({ 
+              content: '❌ Failed to add stock to reseller.', 
+              ephemeral: true 
+            });
+          }
+        }
+        else if (subcommand === 'stock') {
+          const stock = await getResellerStock(member.id);
+          
+          const embed = new EmbedBuilder()
+            .setTitle('📦 Reseller Stock')
+            .setDescription('Your current key inventory')
+            .setColor('#0099FF')
+            .addFields(
+              { name: '👤 Reseller', value: `${member.user.tag}\n(<@${member.id}>)`, inline: false },
+              { name: '📦 Current Stock', value: stock ? `${stock.stock_count} keys` : '0 keys', inline: true },
+              { name: '🔑 Available Keys', value: `${(await getResellerKeys(member.id)).length} keys`, inline: true },
+              { name: '📊 Actions', value: 'Use `/reseller generate` to create keys\nUse `/reseller gift` to gift keys', inline: false }
+            )
+            .setFooter({ text: 'Eps1llon Hub Reseller System' })
+            .setTimestamp();
+          
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+        else if (subcommand === 'generate') {
+          const amount = options.getInteger('amount') || 1;
+          
+          if (amount <= 0 || amount > 10) {
+            return interaction.reply({ 
+              content: '❌ Amount must be between 1 and 10.', 
+              ephemeral: true 
+            });
+          }
+          
+          const stock = await getResellerStock(member.id);
+          
+          if (!stock || stock.stock_count < amount) {
+            return interaction.reply({ 
+              content: `❌ You don't have enough stock. You have ${stock?.stock_count || 0} keys, but requested ${amount}.`, 
+              ephemeral: true 
+            });
+          }
+          
+          try {
+            const generatedKeys = [];
+            for (let i = 0; i < amount; i++) {
+              const result = await generateResellerKeyDB(member.id, member.user.tag);
+              generatedKeys.push(result.key);
+            }
+            
+            // Update stock
+            await updateResellerStock(member.id, stock.stock_count - amount);
+            
+            const embed = new EmbedBuilder()
+              .setTitle('🔑 Keys Generated Successfully')
+              .setDescription(`Generated ${amount} key${amount > 1 ? 's' : ''} from your stock`)
+              .setColor('#FFD700')
+              .addFields(
+                { name: '📦 Remaining Stock', value: `${stock.stock_count - amount} keys`, inline: true },
+                { name: '🔑 Generated Keys', value: generatedKeys.map((key, i) => `${i + 1}. \`${key}\``).join('\n'), inline: false },
+                { name: '📅 Generated At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+              )
+              .setFooter({ text: 'Store these keys securely!' })
+              .setTimestamp();
+            
+            await interaction.reply({ 
+              embeds: [embed], 
+              ephemeral: true 
+            });
+          } catch (error) {
+            console.error('Error generating reseller keys:', error);
+            await interaction.reply({ 
+              content: '❌ Failed to generate keys. Please try again later.', 
+              ephemeral: true 
+            });
+          }
+        }
+        else if (subcommand === 'gift') {
+          const recipient = options.getUser('user');
+          
+          if (recipient.bot) {
+            return interaction.reply({ 
+              content: '❌ You cannot gift keys to bots.', 
+              ephemeral: true 
+            });
+          }
+          
+          try {
+            const result = await giftResellerKeyDB(member.id, recipient.id, recipient.tag);
+            
+            if (!result.success) {
+              return interaction.reply({ 
+                content: `❌ ${result.message}`, 
+                ephemeral: true 
+              });
+            }
+            
+            const embed = new EmbedBuilder()
+              .setTitle('🎁 Key Gifted Successfully')
+              .setDescription(`You have gifted a key to ${recipient.tag}`)
+              .setColor('#9932CC')
+              .addFields(
+                { name: '👤 Recipient', value: `${recipient.tag}\n(<@${recipient.id}>)`, inline: true },
+                { name: '🔑 Key Gifted', value: `\`${result.key}\``, inline: true },
+                { name: '📦 Your Remaining Stock', value: `${(await getResellerStock(member.id))?.stock_count || 0} keys`, inline: true },
+                { name: '📅 Gifted At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+              )
+              .setFooter({ text: 'Thank you for being a reseller!' })
+              .setTimestamp();
+            
+            await interaction.reply({ 
+              embeds: [embed], 
+              ephemeral: true 
+            });
+            
+            // Send DM to recipient
+            try {
+              await recipient.send({
+                embeds: [
+                  new EmbedBuilder()
+                    .setTitle('🎉 You Received a Premium Key!')
+                    .setDescription('A reseller has gifted you an Eps1llon Hub Premium key!')
+                    .setColor('#FFD700')
+                    .addFields(
+                      { name: '🔑 Your Premium Key', value: `\`${result.key}\``, inline: false },
+                      { name: '👤 Gifted By', value: `${member.user.tag}\n(<@${member.id}>)`, inline: true },
+                      { name: '📅 Received At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                      { name: '⏱️ Duration', value: 'Lifetime', inline: true }
+                    )
+                    .setFooter({ text: 'Enjoy your premium experience!' })
+                    .setTimestamp()
+                ]
+              });
+            } catch (e) {
+              // If DM fails, notify the reseller
+              await interaction.followUp({ 
+                content: `⚠️ Could not send DM to ${recipient.tag}. They may have DMs disabled.`, 
+                ephemeral: true 
+              });
+            }
+          } catch (error) {
+            console.error('Error gifting reseller key:', error);
+            await interaction.reply({ 
+              content: '❌ Failed to gift key. Please try again later.', 
+              ephemeral: true 
+            });
+          }
+        }
+        else if (subcommand === 'keys') {
+          const keys = await getResellerKeys(member.id);
+          
+          const embed = new EmbedBuilder()
+            .setTitle('📋 Your Generated Keys')
+            .setDescription('List of keys generated from your stock')
+            .setColor('#FF6347')
+            .addFields(
+              { name: '👤 Reseller', value: `${member.user.tag}\n(<@${member.id}>)`, inline: false },
+              { name: '🔑 Available Keys', value: keys.length > 0 ? 
+                keys.map((key, i) => `${i + 1}. \`${key.script_key}\``).join('\n') : 
+                'No keys available', inline: false },
+              { name: '📊 Total Keys', value: `${keys.length} keys`, inline: true },
+              { name: '📦 Current Stock', value: `${(await getResellerStock(member.id))?.stock_count || 0} keys`, inline: true }
+            )
+            .setFooter({ text: 'Eps1llon Hub Reseller System' })
+            .setTimestamp();
+          
+          await interaction.reply({ 
+            embeds: [embed], 
+            ephemeral: true 
+          });
+        }
+        else if (subcommand === 'help') {
+          const embed = new EmbedBuilder()
+            .setTitle('📘 Reseller Panel Help')
+            .setDescription('Complete guide to using the reseller system')
+            .setColor('#4169E1')
+            .addFields(
+              { name: '🔐 Required Role', value: '<@&1409618882041352322>', inline: false },
+              { name: '📋 Available Commands', value: 
+                '`/reseller panel` - Open the main panel\n' +
+                '`/reseller stock` - View your current stock\n' +
+                '`/reseller generate [amount]` - Generate keys from your stock\n' +
+                '`/reseller gift <user>` - Gift a key to a user\n' +
+                '`/reseller keys` - View your generated keys\n' +
+                '`/reseller help` - Show this help message', inline: false },
+              { name: '📦 How It Works', value: 
+                '1. Admin adds stock to your account\n' +
+                '2. Use `/reseller generate` to create keys from your stock\n' +
+                '3. Use `/reseller gift` to give keys to customers\n' +
+                '4. Your stock decreases automatically when you gift keys', inline: false },
+              { name: '⚠️ Important Notes', value: 
+                '• Keys are one-time use only\n' +
+                '• You cannot gift keys to bots\n' +
+                '• Stock cannot go negative\n' +
+                '• Contact admin for stock replenishment', inline: false }
+            )
+            .setFooter({ text: 'Eps1llon Hub Reseller System' })
+            .setTimestamp();
+          
+          await interaction.reply({ 
+            embeds: [embed], 
+            ephemeral: true 
+          });
+        }
+      }
     } catch (e) {
       console.error(e);
       if (!interaction.replied && !interaction.deferred) {
@@ -1499,6 +1967,92 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       await interaction.showModal(modal);
+    }
+    else if (interaction.customId === 'reseller_generate') {
+      const stock = await getResellerStock(interaction.member.id);
+      
+      if (!stock || stock.stock_count < 1) {
+        return interaction.reply({ 
+          content: '❌ You don\'t have any keys in your stock.', 
+          ephemeral: true 
+        });
+      }
+      
+      try {
+        const result = await generateResellerKeyDB(interaction.member.id, interaction.member.user.tag);
+        await updateResellerStock(interaction.member.id, stock.stock_count - 1);
+        
+        const embed = new EmbedBuilder()
+          .setTitle('🔑 Key Generated Successfully')
+          .setDescription('Your key has been generated from your stock')
+          .setColor('#FFD700')
+          .addFields(
+            { name: '🔑 Generated Key', value: `\`${result.key}\``, inline: false },
+            { name: '📦 Remaining Stock', value: `${stock.stock_count - 1} keys`, inline: true },
+            { name: '📅 Generated At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+          )
+          .setFooter({ text: 'Store this key securely!' })
+          .setTimestamp();
+        
+        await interaction.reply({ 
+          embeds: [embed], 
+          ephemeral: true 
+        });
+      } catch (error) {
+        console.error('Error generating reseller key:', error);
+        await interaction.reply({ 
+          content: '❌ Failed to generate key. Please try again later.', 
+          ephemeral: true 
+        });
+      }
+    }
+    else if (interaction.customId === 'reseller_gift') {
+      // This would require a modal or follow-up interaction to select user
+      // For simplicity, we'll direct them to use the command
+      await interaction.reply({ 
+        content: 'Please use `/reseller gift <user>` to gift a key.', 
+        ephemeral: true 
+      });
+    }
+    else if (interaction.customId === 'reseller_stock') {
+      const stock = await getResellerStock(interaction.member.id);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('📦 Reseller Stock')
+        .setDescription('Your current key inventory')
+        .setColor('#0099FF')
+        .addFields(
+          { name: '📦 Current Stock', value: stock ? `${stock.stock_count} keys` : '0 keys', inline: true },
+          { name: '🔑 Available Keys', value: `${(await getResellerKeys(interaction.member.id)).length} keys`, inline: true }
+        )
+        .setFooter({ text: 'Eps1llon Hub Reseller System' })
+        .setTimestamp();
+      
+      await interaction.reply({ 
+        embeds: [embed], 
+        ephemeral: true 
+      });
+    }
+    else if (interaction.customId === 'reseller_keys') {
+      const keys = await getResellerKeys(interaction.member.id);
+      
+      const embed = new EmbedBuilder()
+        .setTitle('📋 Your Generated Keys')
+        .setDescription('List of keys generated from your stock')
+        .setColor('#FF6347')
+        .addFields(
+          { name: '🔑 Available Keys', value: keys.length > 0 ? 
+            keys.map((key, i) => `${i + 1}. \`${key.script_key}\``).join('\n') : 
+            'No keys available', inline: false },
+          { name: '📊 Total Keys', value: `${keys.length} keys`, inline: true }
+        )
+        .setFooter({ text: 'Eps1llon Hub Reseller System' })
+        .setTimestamp();
+      
+      await interaction.reply({ 
+        embeds: [embed], 
+        ephemeral: true 
+      });
     }
   } else if (interaction.isModalSubmit()) {
     if (interaction.customId === 'ticket_modal') {
