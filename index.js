@@ -17,6 +17,223 @@ const {
   StringSelectMenuBuilder
 } = require('discord.js');
 const axios = require('axios');
+const mysql = require('mysql2/promise');
+
+/* -------------------------------------------------
+   DATABASE CONNECTION
+   ------------------------------------------------- */
+const dbConfig = {
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'discord_bot',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+};
+
+let db;
+
+async function connectDatabase() {
+  try {
+    db = await mysql.createConnection(dbConfig);
+    console.log('Connected to MySQL database');
+    
+    // Create tables if they don't exist
+    await createTables();
+  } catch (error) {
+    console.error('Database connection error:', error);
+    process.exit(1);
+  }
+}
+
+async function createTables() {
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS warnings (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      reason TEXT NOT NULL,
+      moderator VARCHAR(255) NOT NULL,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    
+    `CREATE TABLE IF NOT EXISTS strikes (
+      user_id VARCHAR(255) PRIMARY KEY,
+      count INT DEFAULT 0
+    )`,
+    
+    `CREATE TABLE IF NOT EXISTS tickets (
+      channel_id VARCHAR(255) PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      status VARCHAR(50) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      claimed_by VARCHAR(255) NULL
+    )`,
+    
+    `CREATE TABLE IF NOT EXISTS mute_cooldowns (
+      user_id VARCHAR(255) PRIMARY KEY,
+      last_mute TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    
+    `CREATE TABLE IF NOT EXISTS giveaways (
+      message_id VARCHAR(255) PRIMARY KEY,
+      channel_id VARCHAR(255) NOT NULL,
+      guild_id VARCHAR(255) NOT NULL,
+      prize VARCHAR(255) NOT NULL,
+      winners INT NOT NULL,
+      end_time TIMESTAMP NOT NULL,
+      participants JSON,
+      host VARCHAR(255) NOT NULL
+    )`
+  ];
+  
+  for (const query of tables) {
+    await db.execute(query);
+  }
+  console.log('Database tables initialized');
+}
+
+/* -------------------------------------------------
+   DATABASE HELPER FUNCTIONS
+   ------------------------------------------------- */
+async function getUserWarnings(userId) {
+  const [rows] = await db.execute('SELECT * FROM warnings WHERE user_id = ? ORDER BY timestamp DESC', [userId]);
+  return rows;
+}
+
+async function addUserWarning(userId, reason, moderator) {
+  const [result] = await db.execute(
+    'INSERT INTO warnings (user_id, reason, moderator) VALUES (?, ?, ?)',
+    [userId, reason, moderator]
+  );
+  return result;
+}
+
+async function clearUserWarnings(userId) {
+  const [result] = await db.execute('DELETE FROM warnings WHERE user_id = ?', [userId]);
+  return result;
+}
+
+async function getUserStrikes(userId) {
+  const [rows] = await db.execute('SELECT count FROM strikes WHERE user_id = ?', [userId]);
+  return rows.length > 0 ? rows[0].count : 0;
+}
+
+async function updateUserStrikes(userId, count) {
+  const [result] = await db.execute(
+    'INSERT INTO strikes (user_id, count) VALUES (?, ?) ON DUPLICATE KEY UPDATE count = ?',
+    [userId, count, count]
+  );
+  return result;
+}
+
+async function getLastMuteTime(userId) {
+  const [rows] = await db.execute('SELECT last_mute FROM mute_cooldowns WHERE user_id = ?', [userId]);
+  return rows.length > 0 ? new Date(rows[0].last_mute) : null;
+}
+
+async function updateLastMuteTime(userId) {
+  const [result] = await db.execute(
+    'INSERT INTO mute_cooldowns (user_id) VALUES (?) ON DUPLICATE KEY UPDATE last_mute = CURRENT_TIMESTAMP',
+    [userId]
+  );
+  return result;
+}
+
+async function saveTicket(ticketData) {
+  const [result] = await db.execute(
+    'INSERT INTO tickets (channel_id, user_id, status, claimed_by) VALUES (?, ?, ?, ?)',
+    [ticketData.channelId, ticketData.userId, ticketData.status, ticketData.claimedBy]
+  );
+  return result;
+}
+
+async function getTicketByChannel(channelId) {
+  const [rows] = await db.execute('SELECT * FROM tickets WHERE channel_id = ?', [channelId]);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function updateTicket(channelId, updateData) {
+  const fields = Object.keys(updateData);
+  const values = Object.values(updateData);
+  const setClause = fields.map(field => `${field} = ?`).join(', ');
+  values.push(channelId);
+  
+  const [result] = await db.execute(
+    `UPDATE tickets SET ${setClause} WHERE channel_id = ?`,
+    values
+  );
+  return result;
+}
+
+async function deleteTicket(channelId) {
+  const [result] = await db.execute('DELETE FROM tickets WHERE channel_id = ?', [channelId]);
+  return result;
+}
+
+async function saveGiveaway(giveawayData) {
+  const [result] = await db.execute(
+    'INSERT INTO giveaways (message_id, channel_id, guild_id, prize, winners, end_time, participants, host) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      giveawayData.messageId,
+      giveawayData.channelId,
+      giveawayData.guildId,
+      giveawayData.prize,
+      giveawayData.winners,
+      giveawayData.endTime,
+      JSON.stringify(giveawayData.participants),
+      giveawayData.host
+    ]
+  );
+  return result;
+}
+
+async function getGiveaway(messageId) {
+  const [rows] = await db.execute('SELECT * FROM giveaways WHERE message_id = ?', [messageId]);
+  if (rows.length > 0) {
+    rows[0].participants = JSON.parse(rows[0].participants);
+  }
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function updateGiveaway(messageId, updateData) {
+  const fields = Object.keys(updateData);
+  const values = Object.values(updateData);
+  const setClause = fields.map(field => {
+    if (field === 'participants') {
+      return `${field} = ?`;
+    }
+    return `${field} = ?`;
+  }).join(', ');
+  
+  if (updateData.participants) {
+    const participantsIndex = fields.indexOf('participants');
+    if (participantsIndex !== -1) {
+      values[participantsIndex] = JSON.stringify(values[participantsIndex]);
+    }
+  }
+  
+  values.push(messageId);
+  
+  const [result] = await db.execute(
+    `UPDATE giveaways SET ${setClause} WHERE message_id = ?`,
+    values
+  );
+  return result;
+}
+
+async function deleteGiveaway(messageId) {
+  const [result] = await db.execute('DELETE FROM giveaways WHERE message_id = ?', [messageId]);
+  return result;
+}
+
+async function getAllActiveGiveaways() {
+  const [rows] = await db.execute('SELECT * FROM giveaways WHERE end_time > NOW()');
+  return rows.map(row => {
+    row.participants = JSON.parse(row.participants);
+    return row;
+  });
+}
 
 /* -------------------------------------------------
    CONFIGURATION
@@ -38,12 +255,13 @@ const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '14104003
 const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY';
+const AUTO_MOD_IGNORE_ROLE = '1409618882041352322'; // Role to ignore in auto-mod
 
 // Additional roles that can access tickets (excluding 1396656209821564928)
 const ADDITIONAL_TICKET_ROLES = ['1409618882041352322'];
 
 /* -------------------------------------------------
-   CLIENT & GLOBAL MAPS
+   CLIENT & GLOBAL MAPS (now using database)
    ------------------------------------------------- */
 const client = new Client({
   intents: [
@@ -59,12 +277,8 @@ const client = new Client({
   ]
 });
 
-const warnings = new Map();
-const userStrikes = new Map();
-const giveaways = new Map();
-const muteCooldowns = new Map();
-const tickets = new Map();
-const ticketTranscripts = new Map();
+const ticketTranscripts = new Map(); // Still in memory for performance
+const activeGiveaways = new Map(); // Still in memory for active giveaways
 
 const MUTE_COOLDOWN = 60000;
 
@@ -223,7 +437,12 @@ async function logPhishing(guild, user, message, pattern) {
 /* -------------------------------------------------
    AUTOMOD – GEMINI AI + BASIC DETECTION
    ------------------------------------------------- */
-async function detectToSContent(content, userId) {
+async function detectToSContent(content, userId, member) {
+  // Ignore users with the specified role
+  if (member.roles.cache.has(AUTO_MOD_IGNORE_ROLE)) {
+    return { detected: false, category: null, explanation: null, pattern: null };
+  }
+  
   const lower = content.toLowerCase();
 
   // Basic pattern matching for obvious violations
@@ -251,7 +470,7 @@ async function closeTicket(interaction, ticketData) {
   if (ticketData.status === 'closed')
     return interaction.reply({ content: '❌ This ticket is already closed!', ephemeral: true });
   ticketData.status = 'closed';
-  tickets.set(interaction.channel.id, ticketData);
+  await updateTicket(interaction.channel.id, { status: 'closed' });
   const embed = new EmbedBuilder()
     .setTitle('🔒 Ticket Closed')
     .setDescription('This ticket will be deleted in 10 seconds')
@@ -274,7 +493,7 @@ async function closeTicket(interaction, ticketData) {
   setTimeout(async () => {
     try {
       await interaction.channel.delete();
-      tickets.delete(interaction.channel.id);
+      await deleteTicket(interaction.channel.id);
       ticketTranscripts.delete(interaction.channel.id);
     } catch {}
   }, 10000);
@@ -284,7 +503,7 @@ async function sendTranscript(interaction, ticketData) {
   const transcript = ticketTranscripts.get(interaction.channel.id) || [];
   if (!transcript.length)
     return interaction.reply({ content: '❌ No transcript available for this ticket', ephemeral: true });
-  let text = `# Ticket Transcript\n**Channel:** ${interaction.channel.name}\n**User:** <@${ticketData.userId}>\n**Created:** <t:${Math.floor(ticketData.timestamp / 1000)}:F>\n\n`;
+  let text = `# Ticket Transcript\n**Channel:** ${interaction.channel.name}\n**User:** <@${ticketData.userId}>\n**Created:** <t:${Math.floor(new Date(ticketData.created_at).getTime() / 1000)}:F>\n\n`;
   transcript.forEach(m => {
     text += `[${new Date(m.timestamp).toLocaleString()}] ${m.author}: ${m.content}\n`;
   });
@@ -465,6 +684,18 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
    ------------------------------------------------- */
 client.once(Events.ClientReady, async () => {
   console.log(`Ready as ${client.user.tag}`);
+  
+  // Load active giveaways from database
+  try {
+    const activeGiveawaysDB = await getAllActiveGiveaways();
+    activeGiveawaysDB.forEach(giveaway => {
+      activeGiveaways.set(giveaway.message_id, giveaway);
+    });
+    console.log(`Loaded ${activeGiveaways.size} active giveaways from database`);
+  } catch (error) {
+    console.error('Error loading giveaways from database:', error);
+  }
+  
   try {
     await rest.put(Routes.applicationCommands(client.user.id), {
       body: commands.map(c => c.toJSON())
@@ -541,16 +772,16 @@ client.on(Events.InteractionCreate, async interaction => {
         const duration = options.getInteger('duration') || 10;
         const reason = options.getString('reason') || 'No reason provided';
         const now = Date.now();
-        const last = muteCooldowns.get(member.id) || 0;
-        if (now - last < MUTE_COOLDOWN) {
-          const left = Math.ceil((MUTE_COOLDOWN - (now - last)) / 1000);
+        const last = await getLastMuteTime(member.id);
+        if (last && (now - new Date(last).getTime()) < MUTE_COOLDOWN) {
+          const left = Math.ceil((MUTE_COOLDOWN - (now - new Date(last).getTime())) / 1000);
           return interaction.reply({ content: `❌ Please wait ${left} seconds before muting again!`, ephemeral: true });
         }
         const target = await guild.members.fetch(user.id);
         if (!target.moderatable) return interaction.reply({ content: '❌ Cannot mute this user!', ephemeral: true });
         if (OWNER_IDS.includes(target.id)) return interaction.reply({ content: '❌ Cannot mute bot owner!', ephemeral: true });
         await target.timeout(duration * 60 * 1000, reason);
-        muteCooldowns.set(member.id, now);
+        await updateLastMuteTime(member.id);
         await interaction.reply({ content: `✅ <@${user.id}> muted for ${duration} minutes.\n**Reason:** ${reason}` });
         await logAction(guild, 'mute', user, member.user, reason, duration * 60);
       } else if (commandName === 'unmute') {
@@ -564,11 +795,9 @@ client.on(Events.InteractionCreate, async interaction => {
       } else if (commandName === 'warn') {
         const user = options.getUser('user');
         const reason = options.getString('reason');
-        if (!warnings.has(user.id)) warnings.set(user.id, []);
-        const list = warnings.get(user.id);
-        list.push({ reason, moderator: member.user.tag, timestamp: new Date() });
-        const strikes = (userStrikes.get(user.id) || 0) + 1;
-        userStrikes.set(user.id, strikes);
+        await addUserWarning(user.id, reason, member.user.tag);
+        const strikes = (await getUserStrikes(user.id)) + 1;
+        await updateUserStrikes(user.id, strikes);
         let reply = `⚠️ <@${user.id}> warned.\n**Reason:** ${reason}\n**Strikes:** ${strikes}/3`;
         if (strikes >= 3) {
           const target = await guild.members.fetch(user.id);
@@ -577,23 +806,23 @@ client.on(Events.InteractionCreate, async interaction => {
             reply += '\n\n🔇 Auto-muted for 30 minutes due to 3 strikes!';
             await logAction(guild, 'mute', user, client.user, 'Auto-mute after 3 strikes', 30 * 60);
           }
-          userStrikes.set(user.id, 0);
+          await updateUserStrikes(user.id, 0);
         }
         await interaction.reply({ content: reply });
         await logAction(guild, 'warn', user, member.user, reason);
       } else if (commandName === 'warnings') {
         const user = options.getUser('user') || interaction.user;
-        const list = warnings.get(user.id);
+        const list = await getUserWarnings(user.id);
         if (!list || !list.length) return interaction.reply({ content: `<@${user.id}> has no warnings.`, ephemeral: true });
         let text = `**Warnings for <@${user.id}>**\n`;
         list.forEach((w, i) => {
-          text += `**${i + 1}.** ${w.reason} - ${w.moderator} (${w.timestamp.toLocaleString()})\n`;
+          text += `**${i + 1}.** ${w.reason} - ${w.moderator} (${new Date(w.timestamp).toLocaleString()})\n`;
         });
         await interaction.reply({ content: text });
       } else if (commandName === 'clearwarns') {
         const user = options.getUser('user');
-        warnings.delete(user.id);
-        userStrikes.delete(user.id);
+        await clearUserWarnings(user.id);
+        await updateUserStrikes(user.id, 0);
         await interaction.reply({ content: `✅ Cleared warnings for <@${user.id}>` });
         await logAction(guild, 'clearwarns', user, member.user, 'Cleared all warnings');
       } else if (commandName === 'purge') {
@@ -746,24 +975,29 @@ client.on(Events.InteractionCreate, async interaction => {
               .setStyle(ButtonStyle.Primary)
           );
           const msg = await channel.send({ embeds: [embed], components: [row] });
-          giveaways.set(msg.id, {
+          
+          const giveawayData = {
             messageId: msg.id,
             channelId: channel.id,
             guildId: guild.id,
             prize,
             winners,
-            endTime: end,
-            participants: new Set(),
+            endTime: new Date(end),
+            participants: [],
             host: member.id
-          });
+          };
+          
+          await saveGiveaway(giveawayData);
+          activeGiveaways.set(msg.id, giveawayData);
+          
           const interval = setInterval(async () => {
             const now = Date.now();
             const left = Math.max(0, Math.floor((end - now) / 1000));
             if (left <= 0) {
               clearInterval(interval);
-              const data = giveaways.get(msg.id);
+              const data = activeGiveaways.get(msg.id);
               if (!data) return;
-              const participants = Array.from(data.participants);
+              const participants = [...data.participants];
               const winList = [];
               if (participants.length >= data.winners) {
                 for (let i = 0; i < data.winners; i++) {
@@ -776,7 +1010,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setTitle(`🎉 ${data.prize.toUpperCase()} - ENDED 🎉`)
                 .addFields(
                   { name: '🏆 Winners', value: winList.length ? winList.map(i => `<@${i}>`).join(', ') : 'No participants' },
-                  { name: '👤 Total Entries', value: data.participants.size.toString() },
+                  { name: '👤 Total Entries', value: data.participants.length.toString() },
                   { name: '👑 Hosted by', value: `<@${data.host}>` }
                 )
                 .setColor('#00FF00')
@@ -790,11 +1024,12 @@ client.on(Events.InteractionCreate, async interaction => {
               );
               await msg.edit({ embeds: [final], components: [disabled] });
               if (winList.length) await channel.send(`🎉 Congratulations ${winList.map(i => `<@${i}>`).join(', ')}! You won **${data.prize}**!`);
-              giveaways.delete(msg.id);
+              activeGiveaways.delete(msg.id);
+              await deleteGiveaway(msg.id);
               return;
             }
-            const data = giveaways.get(msg.id);
-            const entryCount = data.participants.size;
+            const data = activeGiveaways.get(msg.id);
+            const entryCount = data.participants.length;
             const chance = calculateWinChance(entryCount, data.winners);
             const upd = new EmbedBuilder()
               .setTitle(`🎉 ${prize.toUpperCase()} 🎉`)
@@ -813,42 +1048,41 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       } else if (commandName === 'ticket') {
         const sub = interaction.options.getSubcommand();
-        const data = tickets.get(interaction.channel.id);
+        const ticketData = await getTicketByChannel(interaction.channel.id);
         if (sub === 'create') {
           // Handled by button
         } else if (sub === 'close') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
-          await closeTicket(interaction, data);
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          await closeTicket(interaction, ticketData);
         } else if (sub === 'add') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           const user = interaction.options.getUser('user');
           await interaction.channel.permissionOverwrites.create(user.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
           await interaction.reply({ content: `✅ <@${user.id}> added to ticket` });
         } else if (sub === 'remove') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           const user = interaction.options.getUser('user');
           await interaction.channel.permissionOverwrites.delete(user.id);
           await interaction.reply({ content: `✅ <@${user.id}> removed from ticket` });
         } else if (sub === 'claim') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID) && !OWNER_IDS.includes(interaction.user.id))
             return interaction.reply({ content: '❌ You do not have permission to claim tickets!', ephemeral: true });
-          if (data.claimedBy) return interaction.reply({ content: `❌ Already claimed by <@${data.claimedBy}>`, ephemeral: true });
-          data.claimedBy = interaction.user.id;
-          tickets.set(interaction.channel.id, data);
+          if (ticketData.claimed_by) return interaction.reply({ content: `❌ Already claimed by <@${ticketData.claimed_by}>`, ephemeral: true });
+          ticketData.claimed_by = interaction.user.id;
+          await updateTicket(interaction.channel.id, { claimed_by: interaction.user.id });
           await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>` });
           await interaction.channel.setName(`claimed-${interaction.user.username}`);
         } else if (sub === 'unclaim') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
-          if (data.claimedBy !== interaction.user.id && !OWNER_IDS.includes(interaction.user.id))
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          if (ticketData.claimed_by !== interaction.user.id && !OWNER_IDS.includes(interaction.user.id))
             return interaction.reply({ content: '❌ You can only unclaim tickets you claimed!', ephemeral: true });
-          data.claimedBy = null;
-          tickets.set(interaction.channel.id, data);
+          await updateTicket(interaction.channel.id, { claimed_by: null });
           await interaction.reply({ content: '✅ Ticket unclaimed' });
           await interaction.channel.setName(interaction.channel.name.replace(/^claimed-/, `ticket-`));
         } else if (sub === 'transcript') {
-          if (!data) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
-          await sendTranscript(interaction, data);
+          if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
+          await sendTranscript(interaction, ticketData);
         }
       } else if (commandName === 'premium') {
         await sendPremiumAd(interaction);
@@ -945,11 +1179,12 @@ client.on(Events.InteractionCreate, async interaction => {
       );
       await interaction.showModal(modal);
     } else if (interaction.customId.startsWith('join_giveaway')) {
-      const data = giveaways.get(interaction.message.id);
+      const data = activeGiveaways.get(interaction.message.id);
       if (!data) return interaction.reply({ content: '❌ Giveaway not found.', ephemeral: true });
-      if (data.participants.has(interaction.user.id)) return interaction.reply({ content: '❌ Already entered.', ephemeral: true });
-      data.participants.add(interaction.user.id);
-      giveaways.set(interaction.message.id, data);
+      if (data.participants.includes(interaction.user.id)) return interaction.reply({ content: '❌ Already entered.', ephemeral: true });
+      data.participants.push(interaction.user.id);
+      activeGiveaways.set(interaction.message.id, data);
+      await updateGiveaway(interaction.message.id, { participants: data.participants });
       await interaction.reply({ content: '🎉 Joined giveaway!', ephemeral: true });
     } else if (interaction.customId === 'purchase_premium') {
       try {
@@ -992,7 +1227,14 @@ client.on(Events.InteractionCreate, async interaction => {
           .setColor('#FFD700')
           .setTimestamp();
         await ticket.send({ embeds: [info] });
-        tickets.set(ticket.id, { userId: interaction.user.id, channelId: ticket.id, status: 'open', timestamp: Date.now(), claimedBy: null });
+        
+        const ticketData = {
+          channelId: ticket.id,
+          userId: interaction.user.id,
+          status: 'open',
+          claimedBy: null
+        };
+        await saveTicket(ticketData);
         ticketTranscripts.set(ticket.id, []);
         await interaction.reply({ content: `✅ Purchase ticket created: <#${ticket.id}>`, ephemeral: true });
         const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
@@ -1013,27 +1255,27 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.reply({ content: '❌ Failed to create purchase ticket.', ephemeral: true });
       }
     } else if (interaction.customId === 'close_purchase_ticket') {
-      const data = tickets.get(interaction.channel.id);
-      if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
-      await closeTicket(interaction, data);
+      const ticketData = await getTicketByChannel(interaction.channel.id);
+      if (!ticketData) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
+      await closeTicket(interaction, ticketData);
     } else if (interaction.customId === 'ticket_claim') {
-      const data = tickets.get(interaction.channel.id);
-      if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
+      const ticketData = await getTicketByChannel(interaction.channel.id);
+      if (!ticketData) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
       if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID) && !OWNER_IDS.includes(interaction.user.id))
         return interaction.reply({ content: '❌ No permission to claim.', ephemeral: true });
-      if (data.claimedBy) return interaction.reply({ content: `❌ Already claimed by <@${data.claimedBy}>`, ephemeral: true });
-      data.claimedBy = interaction.user.id;
-      tickets.set(interaction.channel.id, data);
+      if (ticketData.claimed_by) return interaction.reply({ content: `❌ Already claimed by <@${ticketData.claimed_by}>`, ephemeral: true });
+      ticketData.claimed_by = interaction.user.id;
+      await updateTicket(interaction.channel.id, { claimed_by: interaction.user.id });
       await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>` });
       await interaction.channel.setName(`claimed-${interaction.user.username}`);
     } else if (interaction.customId === 'ticket_close') {
-      const data = tickets.get(interaction.channel.id);
-      if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
-      await closeTicket(interaction, data);
+      const ticketData = await getTicketByChannel(interaction.channel.id);
+      if (!ticketData) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
+      await closeTicket(interaction, ticketData);
     } else if (interaction.customId === 'ticket_transcript') {
-      const data = tickets.get(interaction.channel.id);
-      if (!data) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
-      await sendTranscript(interaction, data);
+      const ticketData = await getTicketByChannel(interaction.channel.id);
+      if (!ticketData) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
+      await sendTranscript(interaction, ticketData);
     } else if (interaction.customId === 'media_apply') {
       const modal = new ModalBuilder()
         .setCustomId('media_application')
@@ -1144,7 +1386,13 @@ client.on(Events.InteractionCreate, async interaction => {
         .setTimestamp();
       await ticket.send({ embeds: [ticketEmbed] });
 
-      tickets.set(ticket.id, { userId: interaction.user.id, channelId: ticket.id, status: 'open', timestamp: Date.now(), claimedBy: null });
+      const ticketData = {
+        channelId: ticket.id,
+        userId: interaction.user.id,
+        status: 'open',
+        claimedBy: null
+      };
+      await saveTicket(ticketData);
       ticketTranscripts.set(ticket.id, []);
       await interaction.editReply({ content: `✅ Ticket created: <#${ticket.id}>` });
 
@@ -1261,14 +1509,15 @@ client.on(Events.MessageCreate, async message => {
   if (hasPermission(message.member)) return;
 
   // Ticket transcript collection
-  if (tickets.has(message.channel.id)) {
+  const ticketData = await getTicketByChannel(message.channel.id);
+  if (ticketData) {
     const arr = ticketTranscripts.get(message.channel.id) || [];
     arr.push({ author: message.author.tag, content: message.content, timestamp: message.createdTimestamp });
     ticketTranscripts.set(message.channel.id, arr);
   }
 
   // AI-powered auto-moderation
-  const result = await detectToSContent(message.content, message.author.id);
+  const result = await detectToSContent(message.content, message.author.id, message.member);
   if (result.detected) {
     try {
       const deleted = message.content;
@@ -1278,8 +1527,8 @@ client.on(Events.MessageCreate, async message => {
       await message.author.send(`❌ Your message was removed for violating Discord's Terms of Service.\n**Category:** ${result.category}\n**Content:** ${deleted.substring(0, 1000)}`);
       
       // Apply strikes system
-      const strikes = (userStrikes.get(message.author.id) || 0) + 1;
-      userStrikes.set(message.author.id, strikes);
+      const strikes = (await getUserStrikes(message.author.id)) + 1;
+      await updateUserStrikes(message.author.id, strikes);
       
       if (strikes >= 3) {
         const target = await message.guild.members.fetch(message.author.id);
@@ -1288,7 +1537,7 @@ client.on(Events.MessageCreate, async message => {
           await message.channel.send(`🔇 <@${message.author.id}> auto-muted for 30 minutes.`);
           await logAction(message.guild, 'mute', message.author, client.user, `Auto-mute after 3 strikes (${result.category})`, 30 * 60, `Deleted: ${deleted.substring(0, 500)}`);
         }
-        userStrikes.set(message.author.id, 0);
+        await updateUserStrikes(message.author.id, 0);
       } else {
         await message.channel.send(`⚠️ <@${message.author.id}> message removed (${result.category}). Strikes: ${strikes}/3`);
       }
@@ -1374,4 +1623,6 @@ client.on(Events.MessageUpdate, async (oldMsg, newMsg) => {
 /* -------------------------------------------------
    LOGIN
    ------------------------------------------------- */
-client.login(process.env.DISCORD_TOKEN);
+connectDatabase().then(() => {
+  client.login(process.env.DISCORD_TOKEN);
+});
