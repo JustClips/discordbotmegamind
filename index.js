@@ -12,12 +12,13 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  TextInputStyle,
   ModalBuilder,
+  TextInputStyle,
   StringSelectMenuBuilder
 } = require('discord.js');
-const axios = require('axios');
-const mysql = require('mysql2/promise');
+
+// Add TextInputBuilder import
+const { TextInputBuilder } = require('@discordjs/builders');
 
 /* -------------------------------------------------
    DATABASE CONNECTION
@@ -36,6 +37,7 @@ let db;
 
 async function connectDatabase() {
   try {
+    const mysql = require('mysql2/promise');
     db = await mysql.createConnection(dbConfig);
     console.log('Connected to MySQL database');
     
@@ -246,7 +248,7 @@ async function saveGiveaway(giveawayData) {
       giveawayData.prize,
       giveawayData.winners,
       giveawayData.endTime,
-      JSON.stringify(giveawayData.participants),
+      JSON.stringify(giveawayData.participants || []),
       giveawayData.host
     ]
   );
@@ -333,11 +335,6 @@ async function savePremiumKey(userData) {
 async function getUserPremiumKey(userId) {
   const [rows] = await db.execute('SELECT * FROM premium_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
   return rows.length > 0 ? rows[0] : null;
-}
-
-async function userHasPremiumKey(userId) {
-  const [rows] = await db.execute('SELECT id FROM premium_keys WHERE user_id = ?', [userId]);
-  return rows.length > 0;
 }
 
 // Reseller Key Functions
@@ -505,6 +502,7 @@ const MUTE_COOLDOWN = 60000;
    ------------------------------------------------- */
 async function checkContentWithAI(content, userId) {
   try {
+    const axios = require('axios');
     const prompt = `
 You are a Discord moderation AI. Analyze the following message and determine if it violates Discord's Terms of Service.
 Focus on these categories:
@@ -1445,10 +1443,9 @@ client.on(Events.InteractionCreate, async interaction => {
               .setTitle('💎 Eps1llon Hub Premium Key')
               .setDescription('Your premium script key has been generated successfully!')
               .setColor('#FFD700')
-              .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
               .addFields(
-                { name: '👤 User', value: `${member.user.tag}\n(<@${member.id}>)`, inline: false },
-                { name: '🔑 Script Key', value: `\`\`\`${scriptKey}\`\`\``, inline: false },
+                { name: '👤 User', value: `${member.user.tag}\n(<@${member.id}>)`, inline: true },
+                { name: '🔑 Script Key', value: `\`${scriptKey}\``, inline: true },
                 { name: '📅 Generated At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
                 { name: '⏱️ Duration', value: 'Lifetime', inline: true },
                 { name: '⚡ Status', value: 'Active ✅', inline: true }
@@ -1485,10 +1482,9 @@ client.on(Events.InteractionCreate, async interaction => {
           const embed = new EmbedBuilder()
             .setTitle('💎 Eps1llon Hub Premium Key Information')
             .setColor('#FFD700')
-            .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
             .addFields(
-              { name: '👤 User', value: `${userKey.username}\n(<@${userKey.user_id}>)`, inline: false },
-              { name: '🔑 Script Key', value: `\`\`\`${userKey.script_key}\`\`\``, inline: false },
+              { name: '👤 User', value: `${userKey.username}\n(<@${userKey.user_id}>)`, inline: true },
+              { name: '🔑 Script Key', value: `\`${userKey.script_key}\``, inline: true },
               { name: '📅 Generated At', value: `<t:${Math.floor(new Date(userKey.created_at).getTime() / 1000)}:F>`, inline: true },
               { name: '⏱️ Duration', value: userKey.expires_at ? 'Expires' : 'Lifetime', inline: true },
               { name: '⚡ Status', value: userKey.is_active ? 'Active ✅' : 'Inactive ❌', inline: true }
