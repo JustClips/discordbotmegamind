@@ -84,6 +84,19 @@ async function createTables() {
       end_time TIMESTAMP NOT NULL,
       participants JSON,
       host VARCHAR(255) NOT NULL
+    )`,
+    
+    // Premium Keys Table
+    `CREATE TABLE IF NOT EXISTS premium_keys (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      script_key VARCHAR(255) UNIQUE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      INDEX idx_user_id (user_id),
+      INDEX idx_script_key (script_key)
     )`
   ];
   
@@ -235,6 +248,38 @@ async function getAllActiveGiveaways() {
   });
 }
 
+// Premium Key Functions
+function generateScriptKey() {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  const keyLength = 24;
+  
+  for (let i = 0; i < keyLength; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  
+  // Add dashes for better readability
+  return result.match(/.{1,6}/g).join('-');
+}
+
+async function savePremiumKey(userData) {
+  const [result] = await db.execute(
+    'INSERT INTO premium_keys (user_id, username, script_key, expires_at) VALUES (?, ?, ?, ?)',
+    [userData.userId, userData.username, userData.scriptKey, userData.expiresAt]
+  );
+  return result;
+}
+
+async function getUserPremiumKey(userId) {
+  const [rows] = await db.execute('SELECT * FROM premium_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function userHasPremiumKey(userId) {
+  const [rows] = await db.execute('SELECT id FROM premium_keys WHERE user_id = ?', [userId]);
+  return rows.length > 0;
+}
+
 /* -------------------------------------------------
    CONFIGURATION
    ------------------------------------------------- */
@@ -249,6 +294,7 @@ const PREMIUM_CHANNEL_ID = '1403870367524585482';
 const PREMIUM_CATEGORY_ID = process.env.PREMIUM_CATEGORY_ID || null;
 const APPLICATION_CATEGORY_ID = '1407184066205319189';
 const PREMIUM_PRICE_LIFETIME = 10;
+const PREMIUM_ROLE_ID = '1405035087703183492'; // Role that can generate keys
 
 /* NEW CONSTANTS ------------------------------------------------- */
 const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360';
@@ -671,7 +717,18 @@ const commands = [
     .setName('reseller-partner')
     .setDescription('Create the Eps1llon Hub Reseller Partnership panel')
     .addChannelOption(o => o.setName('target').setDescription('Channel where the panel should be posted')
-      .setRequired(false).addChannelTypes(ChannelType.GuildText))
+      .setRequired(false).addChannelTypes(ChannelType.GuildText)),
+  
+  // Premium Panel Command
+  new SlashCommandBuilder()
+    .setName('panel')
+    .setDescription('Premium panel for script key management')
+    .addSubcommand(s => 
+      s.setName('generate')
+       .setDescription('Generate your premium script key (lifetime)'))
+    .addSubcommand(s => 
+      s.setName('view')
+       .setDescription('View your premium script key information'))
 ];
 
 /* -------------------------------------------------
@@ -1147,6 +1204,109 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await targetChannel.send({ embeds: [embed], components: [row] });
         await interaction.reply({ content: `✅ Reseller‑partner panel posted in <#${targetChannel.id}>`, ephemeral: true });
+      } else if (commandName === 'panel') {
+        const subcommand = options.getSubcommand();
+        
+        // Check if user has the premium role
+        if (!member.roles.cache.has(PREMIUM_ROLE_ID)) {
+          return interaction.reply({ 
+            content: '❌ You do not have permission to use this command. You need the premium role.', 
+            ephemeral: true 
+          });
+        }
+        
+        if (subcommand === 'generate') {
+          // Check if user already has a key
+          const existingKey = await getUserPremiumKey(member.id);
+          if (existingKey) {
+            return interaction.reply({ 
+              content: '❌ You already have a premium key! Use `/panel view` to see your key information.', 
+              ephemeral: true 
+            });
+          }
+          
+          // Generate new key
+          const scriptKey = generateScriptKey();
+          const userData = {
+            userId: member.id,
+            username: member.user.tag,
+            scriptKey: scriptKey,
+            expiresAt: null // Lifetime key, no expiration
+          };
+          
+          try {
+            // Save to database
+            await savePremiumKey(userData);
+            
+            // Create embed response
+            const embed = new EmbedBuilder()
+              .setTitle('💎 Eps1llon Hub Premium Key')
+              .setDescription('Your premium script key has been generated successfully!')
+              .setColor('#FFD700')
+              .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
+              .addFields(
+                { name: '👤 User', value: `${member.user.tag}\n(<@${member.id}>)`, inline: false },
+                { name: '🔑 Script Key', value: `\`\`\`${scriptKey}\`\`\``, inline: false },
+                { name: '📅 Generated At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                { name: '⏱️ Duration', value: 'Lifetime', inline: true },
+                { name: '⚡ Status', value: 'Active ✅', inline: true }
+              )
+              .setFooter({ text: 'Store this key securely!' })
+              .setTimestamp();
+            
+            await interaction.reply({ 
+              content: '## 🎉 Premium Key Generated Successfully!', 
+              embeds: [embed], 
+              ephemeral: true 
+            });
+            
+          } catch (error) {
+            console.error('Error generating premium key:', error);
+            await interaction.reply({ 
+              content: '❌ Failed to generate premium key. Please try again later.', 
+              ephemeral: true 
+            });
+          }
+        }
+        else if (subcommand === 'view') {
+          // Get user's key
+          const userKey = await getUserPremiumKey(member.id);
+          
+          if (!userKey) {
+            return interaction.reply({ 
+              content: '❌ You don\'t have a premium key yet! Use `/panel generate` to create one.', 
+              ephemeral: true 
+            });
+          }
+          
+          // Create embed response
+          const embed = new EmbedBuilder()
+            .setTitle('💎 Eps1llon Hub Premium Key Information')
+            .setColor('#FFD700')
+            .setThumbnail('https://cdn.discordapp.com/emojis/123456789012345678.png') // Add your premium icon here
+            .addFields(
+              { name: '👤 User', value: `${userKey.username}\n(<@${userKey.user_id}>)`, inline: false },
+              { name: '🔑 Script Key', value: `\`\`\`${userKey.script_key}\`\`\``, inline: false },
+              { name: '📅 Generated At', value: `<t:${Math.floor(new Date(userKey.created_at).getTime() / 1000)}:F>`, inline: true },
+              { name: '⏱️ Duration', value: userKey.expires_at ? 'Expires' : 'Lifetime', inline: true },
+              { name: '⚡ Status', value: userKey.is_active ? 'Active ✅' : 'Inactive ❌', inline: true }
+            )
+            .setFooter({ text: 'Keep your key secure and private!' })
+            .setTimestamp();
+          
+          if (userKey.expires_at) {
+            embed.addFields({ 
+              name: '📅 Expires At', 
+              value: `<t:${Math.floor(new Date(userKey.expires_at).getTime() / 1000)}:F>`, 
+              inline: true 
+            });
+          }
+          
+          await interaction.reply({ 
+            embeds: [embed], 
+            ephemeral: true 
+          });
+        }
       }
     } catch (e) {
       console.error(e);
