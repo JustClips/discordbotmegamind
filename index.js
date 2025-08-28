@@ -120,6 +120,35 @@ async function createTables() {
       username VARCHAR(255) NOT NULL,
       stock_count INT DEFAULT 0,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`,
+    
+    // Media Applications Table
+    `CREATE TABLE IF NOT EXISTS media_applications (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      platform VARCHAR(255) NOT NULL,
+      profile_link TEXT NOT NULL,
+      application_channel_id VARCHAR(255),
+      status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+      reviewed_by VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      reviewed_at TIMESTAMP NULL
+    )`,
+    
+    // Reseller Applications Table
+    `CREATE TABLE IF NOT EXISTS reseller_applications (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      payment_methods TEXT NOT NULL,
+      availability VARCHAR(255) NOT NULL,
+      experience TEXT,
+      application_channel_id VARCHAR(255),
+      status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+      reviewed_by VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      reviewed_at TIMESTAMP NULL
     )`
   ];
   
@@ -178,8 +207,8 @@ async function updateLastMuteTime(userId) {
 
 async function saveTicket(ticketData) {
   const [result] = await db.execute(
-    'INSERT INTO tickets (channel_id, user_id, status, claimed_by) VALUES (?, ?, ?, ?)',
-    [ticketData.channelId, ticketData.userId, ticketData.status, ticketData.claimedBy]
+    'INSERT INTO tickets (channel_id, user_id, status, claimed_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE status = ?, claimed_by = ?',
+    [ticketData.channelId, ticketData.userId, ticketData.status, ticketData.claimedBy, ticketData.status, ticketData.claimedBy]
   );
   return result;
 }
@@ -227,7 +256,11 @@ async function saveGiveaway(giveawayData) {
 async function getGiveaway(messageId) {
   const [rows] = await db.execute('SELECT * FROM giveaways WHERE message_id = ?', [messageId]);
   if (rows.length > 0) {
-    rows[0].participants = JSON.parse(rows[0].participants);
+    try {
+      rows[0].participants = JSON.parse(rows[0].participants || '[]');
+    } catch (e) {
+      rows[0].participants = [];
+    }
   }
   return rows.length > 0 ? rows[0] : null;
 }
@@ -245,7 +278,7 @@ async function updateGiveaway(messageId, updateData) {
   if (updateData.participants) {
     const participantsIndex = fields.indexOf('participants');
     if (participantsIndex !== -1) {
-      values[participantsIndex] = JSON.stringify(values[participantsIndex]);
+      values[participantsIndex] = JSON.stringify(values[participantsIndex] || []);
     }
   }
   
@@ -266,7 +299,11 @@ async function deleteGiveaway(messageId) {
 async function getAllActiveGiveaways() {
   const [rows] = await db.execute('SELECT * FROM giveaways WHERE end_time > NOW()');
   return rows.map(row => {
-    row.participants = JSON.parse(row.participants);
+    try {
+      row.participants = JSON.parse(row.participants || '[]');
+    } catch (e) {
+      row.participants = [];
+    }
     return row;
   });
 }
@@ -395,6 +432,23 @@ async function giftResellerKeyDB(resellerId, recipientId, recipientUsername) {
     recipientId,
     recipientUsername
   };
+}
+
+// Media Application Functions
+async function saveMediaApplication(appData) {
+  const [result] = await db.execute(
+    'INSERT INTO media_applications (user_id, username, platform, profile_link, application_channel_id) VALUES (?, ?, ?, ?, ?)',
+    [appData.userId, appData.username, appData.platform, appData.profileLink, appData.appChannelId]
+  );
+  return result;
+}
+
+async function saveResellerApplication(appData) {
+  const [result] = await db.execute(
+    'INSERT INTO reseller_applications (user_id, username, payment_methods, availability, experience, application_channel_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [appData.userId, appData.username, appData.paymentMethods, appData.availability, appData.experience, appData.appChannelId]
+  );
+  return result;
 }
 
 /* -------------------------------------------------
@@ -987,7 +1041,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (OWNER_IDS.includes(target.id)) return interaction.reply({ content: '❌ Cannot mute bot owner!', ephemeral: true });
         await target.timeout(duration * 60 * 1000, reason);
         await updateLastMuteTime(member.id);
-        await interaction.reply({ content: `✅ <@${user.id}> muted for ${duration} minutes.\n**Reason:** ${reason}` });
+        await interaction.reply({ content: `✅ <@${user.id}> muted for ${duration} minutes.\n**Reason:** ${reason}`, ephemeral: true });
         await logAction(guild, 'mute', user, member.user, reason, duration * 60);
       } else if (commandName === 'unmute') {
         const user = options.getUser('user');
@@ -995,7 +1049,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const target = await guild.members.fetch(user.id);
         if (!target.isCommunicationDisabled()) return interaction.reply({ content: '❌ User is not muted!', ephemeral: true });
         await target.timeout(null);
-        await interaction.reply({ content: `✅ <@${user.id}> unmuted.\n**Reason:** ${reason}` });
+        await interaction.reply({ content: `✅ <@${user.id}> unmuted.\n**Reason:** ${reason}`, ephemeral: true });
         await logAction(guild, 'unmute', user, member.user, reason);
       } else if (commandName === 'warn') {
         const user = options.getUser('user');
@@ -1013,7 +1067,7 @@ client.on(Events.InteractionCreate, async interaction => {
           }
           await updateUserStrikes(user.id, 0);
         }
-        await interaction.reply({ content: reply });
+        await interaction.reply({ content: reply, ephemeral: true });
         await logAction(guild, 'warn', user, member.user, reason);
       } else if (commandName === 'warnings') {
         const user = options.getUser('user') || interaction.user;
@@ -1023,12 +1077,12 @@ client.on(Events.InteractionCreate, async interaction => {
         list.forEach((w, i) => {
           text += `**${i + 1}.** ${w.reason} - ${w.moderator} (${new Date(w.timestamp).toLocaleString()})\n`;
         });
-        await interaction.reply({ content: text });
+        await interaction.reply({ content: text, ephemeral: true });
       } else if (commandName === 'clearwarns') {
         const user = options.getUser('user');
         await clearUserWarnings(user.id);
         await updateUserStrikes(user.id, 0);
-        await interaction.reply({ content: `✅ Cleared warnings for <@${user.id}>` });
+        await interaction.reply({ content: `✅ Cleared warnings for <@${user.id}>`, ephemeral: true });
         await logAction(guild, 'clearwarns', user, member.user, 'Cleared all warnings');
       } else if (commandName === 'purge') {
         const amount = options.getInteger('amount');
@@ -1088,7 +1142,7 @@ client.on(Events.InteractionCreate, async interaction => {
             await channel.send(`🔓 <#${channel.id}> automatically unlocked`);
           }, duration * 60 * 1000);
         }
-        await interaction.reply({ content: `🔒 <#${channel.id}> locked${duration ? ` for ${duration} minutes` : ''}.\n**Reason:** ${reason}` });
+        await interaction.reply({ content: `🔒 <#${channel.id}> locked${duration ? ` for ${duration} minutes` : ''}.\n**Reason:** ${reason}`, ephemeral: true });
         await logAction(guild, 'lock', { id: 'channel', tag: channel.name }, member.user, reason, duration * 60);
       } else if (commandName === 'unlock') {
         await channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
@@ -1096,12 +1150,12 @@ client.on(Events.InteractionCreate, async interaction => {
           const ow = channel.permissionOverwrites.cache.get(id);
           if (ow) await ow.delete();
         }
-        await interaction.reply({ content: `🔓 <#${channel.id}> unlocked.` });
+        await interaction.reply({ content: `🔓 <#${channel.id}> unlocked.`, ephemeral: true });
         await logAction(guild, 'unlock', { id: 'channel', tag: channel.name }, member.user, 'Channel unlocked');
       } else if (commandName === 'slowmode') {
         const seconds = options.getInteger('seconds');
         await channel.setRateLimitPerUser(seconds);
-        await interaction.reply({ content: seconds ? `⏱️ Slowmode set to ${seconds}s` : '⏱️ Slowmode disabled' });
+        await interaction.reply({ content: seconds ? `⏱️ Slowmode set to ${seconds}s` : '⏱️ Slowmode disabled', ephemeral: true });
         await logAction(guild, 'slowmode', { id: 'channel', tag: channel.name }, member.user, `Set to ${seconds}s`, seconds);
       } else if (commandName === 'role') {
         const sub = options.getSubcommand();
@@ -1112,7 +1166,7 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!canManageRoles(member, role)) return interaction.reply({ content: '❌ Cannot manage this role!', ephemeral: true });
           if (!canManageMember(member, target)) return interaction.reply({ content: '❌ Cannot manage this user!', ephemeral: true });
           await target.roles.add(role);
-          await interaction.reply({ content: `✅ Added <@&${role.id}> to <@${user.id}>` });
+          await interaction.reply({ content: `✅ Added <@&${role.id}> to <@${user.id}>`, ephemeral: true });
           await logAction(guild, 'role_add', user, member.user, `Added ${role.name}`);
         } else if (sub === 'remove') {
           const user = options.getUser('user');
@@ -1121,7 +1175,7 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!canManageRoles(member, role)) return interaction.reply({ content: '❌ Cannot manage this role!', ephemeral: true });
           if (!canManageMember(member, target)) return interaction.reply({ content: '❌ Cannot manage this user!', ephemeral: true });
           await target.roles.remove(role);
-          await interaction.reply({ content: `✅ Removed <@&${role.id}> from <@${user.id}>` });
+          await interaction.reply({ content: `✅ Removed <@&${role.id}> from <@${user.id}>`, ephemeral: true });
           await logAction(guild, 'role_remove', user, member.user, `Removed ${role.name}`);
         } else if (sub === 'info') {
           const role = options.getRole('role');
@@ -1137,7 +1191,7 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: 'Hoisted', value: role.hoist ? 'Yes' : 'No', inline: true }
             )
             .setTimestamp();
-          await interaction.reply({ embeds: [embed] });
+          await interaction.reply({ embeds: [embed], ephemeral: true });
         }
       } else if (commandName === 'giverole') {
         const user = options.getUser('user');
@@ -1146,15 +1200,15 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!canManageRoles(member, role)) return interaction.reply({ content: '❌ Cannot manage this role!', ephemeral: true });
         if (!canManageMember(member, target)) return interaction.reply({ content: '❌ Cannot manage this user!', ephemeral: true });
         await target.roles.add(role);
-        await interaction.reply({ content: `✅ Added <@&${role.id}> to <@${user.id}>` });
+        await interaction.reply({ content: `✅ Added <@&${role.id}> to <@${user.id}>`, ephemeral: true });
         await logAction(guild, 'giverole', user, member.user, `Gave ${role.name}`);
       } else if (commandName === 'membercount') {
         const total = guild.memberCount;
         const online = guild.members.cache.filter(m => m.presence?.status !== 'offline').size;
-        await interaction.reply({ content: `👥 Total: ${total}\n🟢 Online: ${online}\n🔴 Offline: ${total - online}` });
+        await interaction.reply({ content: `👥 Total: ${total}\n🟢 Online: ${online}\n🔴 Offline: ${total - online}`, ephemeral: true });
       } else if (commandName === 'onlinecount') {
         const online = guild.members.cache.filter(m => m.presence?.status !== 'offline').size;
-        await interaction.reply({ content: `🟢 Online members: ${online}` });
+        await interaction.reply({ content: `🟢 Online members: ${online}`, ephemeral: true });
       } else if (commandName === 'giveaway') {
         const sub = options.getSubcommand();
         if (sub === 'create') {
@@ -1263,12 +1317,12 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           const user = interaction.options.getUser('user');
           await interaction.channel.permissionOverwrites.create(user.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
-          await interaction.reply({ content: `✅ <@${user.id}> added to ticket` });
+          await interaction.reply({ content: `✅ <@${user.id}> added to ticket`, ephemeral: true });
         } else if (sub === 'remove') {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           const user = interaction.options.getUser('user');
           await interaction.channel.permissionOverwrites.delete(user.id);
-          await interaction.reply({ content: `✅ <@${user.id}> removed from ticket` });
+          await interaction.reply({ content: `✅ <@${user.id}> removed from ticket`, ephemeral: true });
         } else if (sub === 'claim') {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           if (!interaction.member.roles.cache.has(SUPPORT_ROLE_ID) && !OWNER_IDS.includes(interaction.user.id))
@@ -1276,14 +1330,14 @@ client.on(Events.InteractionCreate, async interaction => {
           if (ticketData.claimed_by) return interaction.reply({ content: `❌ Already claimed by <@${ticketData.claimed_by}>`, ephemeral: true });
           ticketData.claimed_by = interaction.user.id;
           await updateTicket(interaction.channel.id, { claimed_by: interaction.user.id });
-          await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>` });
+          await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>`, ephemeral: true });
           await interaction.channel.setName(`claimed-${interaction.user.username}`);
         } else if (sub === 'unclaim') {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           if (ticketData.claimed_by !== interaction.user.id && !OWNER_IDS.includes(interaction.user.id))
             return interaction.reply({ content: '❌ You can only unclaim tickets you claimed!', ephemeral: true });
           await updateTicket(interaction.channel.id, { claimed_by: null });
-          await interaction.reply({ content: '✅ Ticket unclaimed' });
+          await interaction.reply({ content: '✅ Ticket unclaimed', ephemeral: true });
           await interaction.channel.setName(interaction.channel.name.replace(/^claimed-/, `ticket-`));
         } else if (sub === 'transcript') {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
@@ -1894,7 +1948,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (ticketData.claimed_by) return interaction.reply({ content: `❌ Already claimed by <@${ticketData.claimed_by}>`, ephemeral: true });
       ticketData.claimed_by = interaction.user.id;
       await updateTicket(interaction.channel.id, { claimed_by: interaction.user.id });
-      await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>` });
+      await interaction.reply({ content: `✅ Ticket claimed by <@${interaction.user.id}>`, ephemeral: true });
       await interaction.channel.setName(`claimed-${interaction.user.username}`);
     } else if (interaction.customId === 'ticket_close') {
       const ticketData = await getTicketByChannel(interaction.channel.id);
@@ -2164,6 +2218,16 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      // Save to database
+      const appData = {
+        userId: interaction.user.id,
+        username: interaction.user.tag,
+        platform: platform,
+        profileLink: link,
+        appChannelId: appChannel.id
+      };
+      await saveMediaApplication(appData);
+
       await appChannel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
       await interaction.editReply({ content: '✅ Your application channel has been created. Staff will review it shortly.', ephemeral: true });
     } else if (interaction.customId === 'reseller_application') {
@@ -2207,6 +2271,17 @@ client.on(Events.InteractionCreate, async interaction => {
           embeds: [embed]
         });
       }
+
+      // Save to database
+      const appData = {
+        userId: interaction.user.id,
+        username: interaction.user.tag,
+        paymentMethods: payment,
+        availability: availability,
+        experience: experience,
+        appChannelId: appChannel.id
+      };
+      await saveResellerApplication(appData);
 
       await appChannel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
       await interaction.editReply({ content: '✅ Your reseller application channel has been created. Staff will review it shortly.', ephemeral: true });
