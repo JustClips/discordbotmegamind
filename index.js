@@ -15,7 +15,8 @@ const {
   ChannelType,
   ModalBuilder,
   TextInputStyle,
-  StringSelectMenuBuilder
+  StringSelectMenuBuilder,
+  MessageMentions
 } = require('discord.js');
 
 // Add TextInputBuilder import
@@ -152,6 +153,17 @@ async function createTables() {
       reviewed_by VARCHAR(255) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       reviewed_at TIMESTAMP NULL
+    )`,
+    
+    // AI Conversation History Table
+    `CREATE TABLE IF NOT EXISTS ai_conversations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL,
+      message TEXT NOT NULL,
+      response TEXT,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_id (user_id),
+      INDEX idx_timestamp (timestamp)
     )`
   ];
   
@@ -449,6 +461,23 @@ async function saveResellerApplication(appData) {
   return result;
 }
 
+// AI Conversation Functions
+async function saveAIConversation(userId, message, response = null) {
+  const [result] = await db.execute(
+    'INSERT INTO ai_conversations (user_id, message, response) VALUES (?, ?, ?)',
+    [userId, message, response]
+  );
+  return result;
+}
+
+async function getAIConversationHistory(userId, limit = 10) {
+  const [rows] = await db.execute(
+    'SELECT message, response FROM ai_conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+    [userId, limit]
+  );
+  return rows.reverse(); // Return in chronological order
+}
+
 /* -------------------------------------------------
    CONFIGURATION
    ------------------------------------------------- */
@@ -472,6 +501,7 @@ const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID ||
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY';
 const AUTO_MOD_IGNORE_ROLE = '1409618882041352322'; // Role to ignore in auto-mod
+const BOT_USER_ID = '834413279920128042'; // Your bot's user ID
 
 // Additional roles that can access tickets (excluding 1396656209821564928)
 const ADDITIONAL_TICKET_ROLES = ['1409618882041352322'];
@@ -499,8 +529,75 @@ const activeGiveaways = new Map(); // Still in memory for active giveaways
 const MUTE_COOLDOWN = 60000;
 
 /* -------------------------------------------------
-   GEMINI AI MODERATION
+   GEMINI AI CHAT & MODERATION
    ------------------------------------------------- */
+async function chatWithAI(message, userId, guild) {
+  try {
+    const axios = require('axios');
+    
+    // Get conversation history
+    const history = await getAIConversationHistory(userId, 5);
+    
+    // Build conversation context
+    let conversationHistory = '';
+    history.forEach(entry => {
+      conversationHistory += `User: ${entry.message}\nAI: ${entry.response}\n`;
+    });
+    
+    const prompt = `
+You are Eps1llon Hub Assistant, a helpful AI bot for the Eps1llon Hub Discord server.
+Your purpose is to assist users with questions about:
+- Premium script features and pricing
+- Ticket system usage
+- Partnership opportunities (media/reseller)
+- Server rules and moderation
+- General server information
+
+Conversation History:
+${conversationHistory}
+
+Current Message: ${message}
+
+Guidelines:
+1. Be helpful and friendly
+2. Provide accurate information about Eps1llon Hub
+3. If you don't know something, suggest asking staff
+4. Never provide premium keys or sensitive information
+5. Keep responses concise but informative
+6. Do not repeat yourself
+7. Do not engage in arguments or inappropriate topics
+
+Respond directly with your answer without any prefixes.
+`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'I\'m not sure how to help with that.';
+    
+    // Save conversation to database
+    await saveAIConversation(userId, message, result);
+    
+    return result.trim();
+  } catch (error) {
+    console.error('Gemini API Error:', error.message);
+    return 'Sorry, I encountered an error processing your request.';
+  }
+}
+
 async function checkContentWithAI(content, userId) {
   try {
     const axios = require('axios');
@@ -1740,7 +1837,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 /* -------------------------------------------------
-   MESSAGE CREATE (AI auto-moderation)
+   MESSAGE CREATE (AI auto-moderation & chat)
    ------------------------------------------------- */
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
@@ -1753,6 +1850,35 @@ client.on(Events.MessageCreate, async message => {
     const arr = ticketTranscripts.get(message.channel.id) || [];
     arr.push({ author: message.author.tag, content: message.content, timestamp: message.createdTimestamp });
     ticketTranscripts.set(message.channel.id, arr);
+  }
+
+  // AI Chat Response
+  const isMentioned = message.mentions.has(client.user.id) || 
+                     message.content.includes(`<@${BOT_USER_ID}>`) || 
+                     message.content.includes(`<@!${BOT_USER_ID}>`);
+  
+  if (isMentioned) {
+    try {
+      // Remove bot mention from message
+      let cleanMessage = message.content
+        .replace(new RegExp(`<@!?${BOT_USER_ID}>`, 'g'), '')
+        .trim();
+      
+      // If message is empty after removing mention, provide default response
+      if (!cleanMessage) {
+        cleanMessage = "Hello! How can I help you today?";
+      }
+      
+      // Get AI response
+      const response = await chatWithAI(cleanMessage, message.author.id, message.guild);
+      
+      // Send response
+      await message.reply(response);
+    } catch (error) {
+      console.error('AI Chat Error:', error);
+      await message.reply("Sorry, I'm having trouble responding right now. Please try again later.");
+    }
+    return; // Don't process further if it's a chat message
   }
 
   // AI-powered auto-moderation
