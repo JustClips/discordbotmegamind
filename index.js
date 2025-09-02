@@ -463,19 +463,29 @@ async function saveResellerApplication(appData) {
 
 // AI Conversation Functions
 async function saveAIConversation(userId, message, response = null) {
-  const [result] = await db.execute(
-    'INSERT INTO ai_conversations (user_id, message, response) VALUES (?, ?, ?)',
-    [userId, message, response]
-  );
-  return result;
+  try {
+    const [result] = await db.execute(
+      'INSERT INTO ai_conversations (user_id, message, response) VALUES (?, ?, ?)',
+      [userId, message, response]
+    );
+    return result;
+  } catch (error) {
+    console.error('Database error saving conversation:', error);
+    return null;
+  }
 }
 
 async function getAIConversationHistory(userId, limit = 10) {
-  const [rows] = await db.execute(
-    'SELECT message, response FROM ai_conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
-    [userId, limit]
-  );
-  return rows.reverse(); // Return in chronological order
+  try {
+    const [rows] = await db.execute(
+      'SELECT message, response FROM ai_conversations WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+      [userId, limit]
+    );
+    return rows.reverse(); // Return in chronological order
+  } catch (error) {
+    console.error('Database error fetching conversation history:', error);
+    return [];
+  }
 }
 
 /* -------------------------------------------------
@@ -593,7 +603,7 @@ Respond directly with your answer without any prefixes.
     
     return result.trim();
   } catch (error) {
-    console.error('Gemini API Error:', error.message);
+    console.error('Gemini API Error:', error.response?.status, error.message);
     return 'Sorry, I encountered an error processing your request.';
   }
 }
@@ -657,7 +667,7 @@ Example responses:
     
     return { detected: false, category: null, explanation: null, pattern: null };
   } catch (error) {
-    console.error('Gemini API Error:', error.message);
+    console.error('Gemini Moderation API Error:', error.response?.status, error.message);
     return { detected: false, category: null, explanation: null, pattern: null };
   }
 }
