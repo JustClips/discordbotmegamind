@@ -509,12 +509,11 @@ const RESSELLER_ROLE_ID = '1409618882041352322'; // Reseller role
 const PHISHING_LOG_CHANNEL_ID = process.env.PHISHING_LOG_CHANNEL_ID || '1410400306445025360';
 const MEDIA_PARTNER_LOG_CHANNEL_ID = process.env.MEDIA_PARTNER_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || MOD_ROLE_ID;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY';
 const AUTO_MOD_IGNORE_ROLE = '1409618882041352322'; // Role to ignore in auto-mod
 const BOT_USER_ID = '834413279920128042'; // Your bot's user ID
 
-// Additional roles that can access tickets (excluding 1396656209821564928)
-const ADDITIONAL_TICKET_ROLES = ['1409618882041352322'];
+// Additional roles that can access tickets
+const ADDITIONAL_TICKET_ROLES = ['1409618882041352322', '1398413061169352949'];
 
 /* -------------------------------------------------
    CLIENT & GLOBAL MAPS (now using database)
@@ -537,184 +536,6 @@ const ticketTranscripts = new Map(); // Still in memory for performance
 const activeGiveaways = new Map(); // Still in memory for active giveaways
 
 const MUTE_COOLDOWN = 60000;
-
-/* -------------------------------------------------
-   GEMINI AI CHAT & MODERATION
-   ------------------------------------------------- */
-async function chatWithAI(message, userId, guild) {
-  try {
-    const axios = require('axios');
-    
-    // Get conversation history
-    const history = await getAIConversationHistory(userId, 5);
-    
-    // Build conversation context
-    let conversationHistory = '';
-    history.forEach(entry => {
-      conversationHistory += `User: ${entry.message}\nAI: ${entry.response}\n`;
-    });
-    
-    const prompt = `
-You are Eps1llon Hub Assistant, a helpful AI bot for the Eps1llon Hub Discord server.
-
-Your purpose is to assist users with questions about:
-
-- Premium script features and pricing
-
-- Ticket system usage
-
-- Partnership opportunities (media/reseller)
-
-- Server rules and moderation
-
-- General server information
-
-
-
-Conversation History:
-
-${conversationHistory}
-
-
-
-Current Message: ${message}
-
-
-
-Guidelines:
-
-1. Be helpful and friendly
-
-2. Provide accurate information about Eps1llon Hub
-
-3. If you don't know something, suggest asking staff
-
-4. Never provide premium keys or sensitive information
-
-5. Keep responses concise but informative
-
-6. Do not repeat yourself
-
-7. Do not engage in arguments or inappropriate topics
-
-
-
-Respond directly with your answer without any prefixes.
-
-`;
-
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'I\'m not sure how to help with that.';
-    
-    // Save conversation to database
-    await saveAIConversation(userId, message, result);
-    
-    return result.trim();
-  } catch (error) {
-    console.error('Gemini API Error:', error.response?.status, error.message);
-    return 'Sorry, I encountered an error processing your request.';
-  }
-}
-
-async function checkContentWithAI(content, userId) {
-  try {
-    const axios = require('axios');
-    const prompt = `
-You are a Discord moderation AI. Analyze the following message and determine if it violates Discord's Terms of Service.
-
-
-
-Focus on these categories:
-
-1. Hate speech or discrimination
-
-2. Harassment or bullying
-
-3. Illegal activities
-
-4. Sexual content involving minors
-
-5. Violent content
-
-6. Spam or phishing
-
-7. Self-harm or suicide promotion
-
-
-
-Message: "${content}"
-
-
-
-Respond ONLY with one of these exact formats:
-
-- SAFE: [reason]
-
-- DELETE: [category] - [brief explanation]
-
-
-
-Example responses:
-
-- SAFE: No violations detected
-
-- DELETE: Hate speech - Contains racial slurs
-
-- DELETE: Harassment - Threatens violence against users
-
-`;
-
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }]
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const result = response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'SAFE: No response';
-    
-    if (result.startsWith('DELETE:')) {
-      const parts = result.substring(8).split(' - ');
-      const category = parts[0];
-      const explanation = parts.slice(1).join(' - ') || 'Violation detected';
-      return { 
-        detected: true, 
-        category: category, 
-        explanation: explanation,
-        pattern: `AI flagged: ${category}`
-      };
-    }
-    
-    return { detected: false, category: null, explanation: null, pattern: null };
-  } catch (error) {
-    console.error('Gemini Moderation API Error:', error.response?.status, error.message);
-    return { detected: false, category: null, explanation: null, pattern: null };
-  }
-}
 
 /* -------------------------------------------------
    HELPER FUNCTIONS
@@ -804,40 +625,26 @@ async function logPhishing(guild, user, message, pattern) {
 }
 
 /* -------------------------------------------------
-   AUTOMOD – GEMINI AI + BASIC DETECTION
-   ------------------------------------------------- */
-async function detectToSContent(content, userId, member) {
-  // Ignore users with the specified role
-  if (member.roles.cache.has(AUTO_MOD_IGNORE_ROLE)) {
-    return { detected: false, category: null, explanation: null, pattern: null };
-  }
-  
-  const lower = content.toLowerCase();
-
-  // Basic pattern matching for obvious violations
-  const basicPatterns = [
-    { pattern: /discord\.gg\/[a-zA-Z0-9]+/gi, category: 'Spam/Phishing', reason: 'Discord invite link' },
-    { pattern: /(kys|kill yourself)/gi, category: 'Self-harm', reason: 'Self-harm promotion' },
-    { pattern: /n[i1!|]gg[ae3r]/gi, category: 'Hate speech', reason: 'Racial slur' },
-    { pattern: /f[a4@]gg[o0]t/gi, category: 'Hate speech', reason: 'Homophobic slur' }
-  ];
-
-  for (const { pattern, category, reason } of basicPatterns) {
-    if (pattern.test(lower)) {
-      return { detected: true, category, explanation: reason, pattern: reason };
-    }
-  }
-
-  // If no basic patterns match, use AI for deeper analysis
-  return await checkContentWithAI(content, userId);
-}
-
-/* -------------------------------------------------
    TICKET HELPERS
    ------------------------------------------------- */
 async function closeTicket(interaction, ticketData) {
   if (ticketData.status === 'closed')
     return interaction.reply({ content: '❌ This ticket is already closed!', ephemeral: true });
+  
+  // Check if user can close ticket
+  const canClose = (
+    interaction.user.id === ticketData.userId || 
+    OWNER_IDS.includes(interaction.user.id) ||
+    interaction.member.roles.cache.hasAny(...ADDITIONAL_TICKET_ROLES)
+  );
+  
+  if (!canClose) {
+    return interaction.reply({ 
+      content: '❌ You do not have permission to close this ticket!', 
+      ephemeral: true 
+    });
+  }
+  
   ticketData.status = 'closed';
   await updateTicket(interaction.channel.id, { status: 'closed' });
   const embed = new EmbedBuilder()
@@ -1027,6 +834,11 @@ const commands = [
     .addSubcommand(s => s.setName('claim').setDescription('Claim a ticket'))
     .addSubcommand(s => s.setName('unclaim').setDescription('Unclaim a ticket'))
     .addSubcommand(s => s.setName('transcript').setDescription('Get ticket transcript')),
+  
+  new SlashCommandBuilder()
+    .setName('closealltickets')
+    .setDescription('Close all open tickets')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   
   new SlashCommandBuilder().setName('premium').setDescription('Display premium script advertisement'),
   
@@ -1453,6 +1265,55 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!ticketData) return interaction.reply({ content: '❌ This command can only be used in ticket channels!', ephemeral: true });
           await sendTranscript(interaction, ticketData);
         }
+      } else if (commandName === 'closealltickets') {
+        if (!OWNER_IDS.includes(interaction.user.id)) {
+          return interaction.reply({ 
+            content: '❌ Only server owners can use this command!', 
+            ephemeral: true 
+          });
+        }
+        
+        await interaction.deferReply({ ephemeral: true });
+        
+        // Get all open tickets from database
+        const [tickets] = await db.execute(
+          'SELECT * FROM tickets WHERE status = ?', 
+          ['open']
+        );
+        
+        let closedCount = 0;
+        const errors = [];
+        
+        for (const ticket of tickets) {
+          try {
+            const channel = interaction.guild.channels.cache.get(ticket.channel_id);
+            if (channel) {
+              // Update database
+              await updateTicket(ticket.channel_id, { status: 'closed' });
+              
+              // Delete channel
+              await channel.delete();
+              
+              // Clean up transcript
+              ticketTranscripts.delete(ticket.channel_id);
+              
+              closedCount++;
+            }
+          } catch (error) {
+            errors.push(`Failed to close ticket ${ticket.channel_id}: ${error.message}`);
+          }
+        }
+        
+        // Clean up database entries
+        await db.execute('DELETE FROM tickets WHERE status = ?', ['closed']);
+        
+        let response = `✅ Closed ${closedCount} tickets.`;
+        if (errors.length > 0) {
+          response += `\n⚠️ Errors encountered:\n${errors.slice(0, 5).join('\n')}`;
+          if (errors.length > 5) response += `\n... and ${errors.length - 5} more`;
+        }
+        
+        await interaction.editReply({ content: response });
       } else if (commandName === 'premium') {
         await sendPremiumAd(interaction);
       } else if (commandName === 'media-partner') {
@@ -1891,7 +1752,7 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 /* -------------------------------------------------
-   MESSAGE CREATE (AI auto-moderation & chat)
+   MESSAGE CREATE (auto-moderation)
    ------------------------------------------------- */
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
@@ -1904,35 +1765,6 @@ client.on(Events.MessageCreate, async message => {
     const arr = ticketTranscripts.get(message.channel.id) || [];
     arr.push({ author: message.author.tag, content: message.content, timestamp: message.createdTimestamp });
     ticketTranscripts.set(message.channel.id, arr);
-  }
-
-  // AI Chat Response
-  const isMentioned = message.mentions.has(client.user.id) || 
-                     message.content.includes(`<@${BOT_USER_ID}>`) || 
-                     message.content.includes(`<@!${BOT_USER_ID}>`);
-  
-  if (isMentioned) {
-    try {
-      // Remove bot mention from message
-      let cleanMessage = message.content
-        .replace(new RegExp(`<@!?${BOT_USER_ID}>`, 'g'), '')
-        .trim();
-      
-      // If message is empty after removing mention, provide default response
-      if (!cleanMessage) {
-        cleanMessage = "Hello! How can I help you today?";
-      }
-      
-      // Get AI response
-      const response = await chatWithAI(cleanMessage, message.author.id, message.guild);
-      
-      // Send response
-      await message.reply(response);
-    } catch (error) {
-      console.error('AI Chat Error:', error);
-      await message.reply("Sorry, I'm having trouble responding right now. Please try again later.");
-    }
-    return; // Don't process further if it's a chat message
   }
 
   // AI-powered auto-moderation
@@ -2038,6 +1870,34 @@ client.on(Events.MessageUpdate, async (oldMsg, newMsg) => {
     await log.send({ embeds: [embed] });
   }
 });
+
+/* -------------------------------------------------
+   AUTOMOD – BASIC DETECTION (removed AI)
+   ------------------------------------------------- */
+async function detectToSContent(content, userId, member) {
+  // Ignore users with the specified role
+  if (member.roles.cache.has(AUTO_MOD_IGNORE_ROLE)) {
+    return { detected: false, category: null, explanation: null, pattern: null };
+  }
+  
+  const lower = content.toLowerCase();
+
+  // Basic pattern matching for obvious violations
+  const basicPatterns = [
+    { pattern: /discord\.gg\/[a-zA-Z0-9]+/gi, category: 'Spam/Phishing', reason: 'Discord invite link' },
+    { pattern: /(kys|kill yourself)/gi, category: 'Self-harm', reason: 'Self-harm promotion' },
+    { pattern: /n[i1!|]gg[ae3r]/gi, category: 'Hate speech', reason: 'Racial slur' },
+    { pattern: /f[a4@]gg[o0]t/gi, category: 'Hate speech', reason: 'Homophobic slur' }
+  ];
+
+  for (const { pattern, category, reason } of basicPatterns) {
+    if (pattern.test(lower)) {
+      return { detected: true, category, explanation: reason, pattern: reason };
+    }
+  }
+
+  return { detected: false, category: null, explanation: null, pattern: null };
+}
 
 /* -------------------------------------------------
    LOGIN
