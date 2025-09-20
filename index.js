@@ -170,6 +170,18 @@ async function createTables() {
   for (const query of tables) {
     await db.execute(query);
   }
+  
+  // Add payment_method column to tickets table if it doesn't exist
+  try {
+    await db.execute('ALTER TABLE tickets ADD COLUMN payment_method VARCHAR(50) NULL');
+    console.log('Added payment_method column to tickets table');
+  } catch (error) {
+    // Column might already exist, which is fine
+    if (error.code !== 'ER_DUP_FIELDNAME') {
+      console.error('Error adding payment_method column:', error);
+    }
+  }
+  
   console.log('Database tables initialized');
 }
 
@@ -719,7 +731,7 @@ async function sendPremiumAd(interaction) {
       },
       { 
         name: '💳 Payment Methods', 
-        value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle', 
+        value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle\n• Brainrot Secrets\n• Grow A Garden', 
         inline: true 
       },
       { 
@@ -908,7 +920,7 @@ client.once(Events.ClientReady, async () => {
             },
             { 
               name: '💳 Payment Methods', 
-              value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle', 
+              value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle\n• Brainrot Secrets\n• Grow A Garden', 
               inline: true 
             },
             { 
@@ -1434,7 +1446,9 @@ client.on(Events.InteractionCreate, async interaction => {
           { label: 'PIX', value: 'pix' },
           { label: 'PayPal', value: 'paypal' },
           { label: 'Venmo', value: 'venmo' },
-          { label: 'Zelle', value: 'zelle' }
+          { label: 'Zelle', value: 'zelle' },
+          { label: 'Brainrot Secrets', value: 'brainrotsecrets' },
+          { label: 'Grow A Garden', value: 'growagarden' }
         );
 
       const row = new ActionRowBuilder().addComponents(paymentSelect);
@@ -1544,7 +1558,9 @@ client.on(Events.InteractionCreate, async interaction => {
         pix: 'PIX',
         paypal: 'PayPal',
         venmo: 'Venmo',
-        zelle: 'Zelle'
+        zelle: 'Zelle',
+        brainrotsecrets: 'Brainrot Secrets',
+        growagarden: 'Grow A Garden'
       };
 
       const paymentLabel = paymentLabelMap[paymentMethod] || paymentMethod;
@@ -1577,11 +1593,19 @@ client.on(Events.InteractionCreate, async interaction => {
         const paymentMessage = `**Payment Method:** ${paymentLabel}`;
         await ticket.send(paymentMessage);
 
-        // Send ticket panel
+        // Send ticket panel with improved design
         const panel = new EmbedBuilder()
-          .setTitle('🛒 Purchase Ticket')
+          .setTitle('🛒 Premium Purchase Ticket')
           .setDescription('Our team will assist you shortly.')
-          .setColor('#0099ff');
+          .setColor('#0099ff')
+          .addFields(
+            { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+            { name: 'Payment Method', value: paymentLabel, inline: true },
+            { name: 'Status', value: 'Open', inline: true }
+          )
+          .setFooter({ text: 'Eps1llon Hub Premium Support' })
+          .setTimestamp();
+
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId('close_purchase_ticket')
@@ -1594,11 +1618,17 @@ client.on(Events.InteractionCreate, async interaction => {
           components: [row]
         });
 
-        // Send premium info
+        // Send premium info with improved design
         const info = new EmbedBuilder()
           .setTitle('💎 Eps1llon Hub Premium Purchase')
-          .setDescription(`**Price:** $${PREMIUM_PRICE_LIFETIME} (Lifetime)\n\n**Accepted Payment Methods:**\n• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle`)
+          .setDescription('Thank you for your purchase! Our team will contact you shortly.')
           .setColor('#FFD700')
+          .addFields(
+            { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} (Lifetime)`, inline: true },
+            { name: 'Payment Method', value: paymentLabel, inline: true },
+            { name: 'Accepted Payment Methods', value: '• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle\n• Brainrot Secrets\n• Grow A Garden', inline: false }
+          )
+          .setFooter({ text: 'Eps1llon Hub Premium Support' })
           .setTimestamp();
         await ticket.send({ embeds: [info] });
 
@@ -1624,7 +1654,7 @@ client.on(Events.InteractionCreate, async interaction => {
           const logEmbed = new EmbedBuilder()
             .setTitle('🛒 Premium Purchase Ticket Created')
             .addFields(
-              { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+              { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
               { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
               { name: 'Payment Method', value: paymentLabel, inline: true },
               { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true }
@@ -1667,7 +1697,13 @@ client.on(Events.InteractionCreate, async interaction => {
       const panel = new EmbedBuilder()
         .setTitle('🎫 Ticket Controls')
         .setDescription('Use the buttons below to manage this ticket')
-        .setColor('#0099ff');
+        .setColor('#0099ff')
+        .addFields(
+          { name: 'Created By', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+          { name: 'Status', value: 'Open', inline: true }
+        )
+        .setFooter({ text: 'Eps1llon Hub Support' })
+        .setTimestamp();
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger),
@@ -1679,11 +1715,12 @@ client.on(Events.InteractionCreate, async interaction => {
         .setTitle(`🎫 Ticket: ${subject}`)
         .setDescription(description)
         .addFields(
-          { name: 'Created By', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'Created By', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
           { name: 'Ticket ID', value: ticket.id, inline: true },
           { name: 'Status', value: 'Open', inline: true }
         )
         .setColor('#00ff00')
+        .setFooter({ text: 'Eps1llon Hub Support' })
         .setTimestamp();
       await ticket.send({ embeds: [ticketEmbed] });
 
@@ -1703,7 +1740,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const logEmbed = new EmbedBuilder()
           .setTitle('🎫 Ticket Created')
           .addFields(
-            { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+            { name: 'User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
             { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
             { name: 'Subject', value: subject, inline: false },
             { name: 'Description', value: description.substring(0, 1024), inline: false }
@@ -1742,6 +1779,7 @@ client.on(Events.InteractionCreate, async interaction => {
           { name: 'Platform(s)', value: platform, inline: true },
           { name: 'Channel / Profile', value: link, inline: false }
         )
+        .setFooter({ text: 'Media Partnership Review' })
         .setTimestamp();
 
       const logChannel = interaction.guild.channels.cache.get(MEDIA_PARTNER_LOG_CHANNEL_ID);
@@ -1796,6 +1834,7 @@ client.on(Events.InteractionCreate, async interaction => {
           { name: 'Availability', value: availability, inline: true },
           { name: 'Experience / Store Link', value: experience || '*None provided*', inline: false }
         )
+        .setFooter({ text: 'Reseller Partnership Review' })
         .setTimestamp();
 
       const logChannel = interaction.guild.channels.cache.get(MEDIA_PARTNER_LOG_CHANNEL_ID);
