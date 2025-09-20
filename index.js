@@ -19,7 +19,6 @@ const {
   MessageMentions
 } = require('discord.js');
 
-// Add TextInputBuilder import
 const { TextInputBuilder } = require('@discordjs/builders');
 
 /* -------------------------------------------------
@@ -71,7 +70,8 @@ async function createTables() {
       user_id VARCHAR(255) NOT NULL,
       status VARCHAR(50) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      claimed_by VARCHAR(255) NULL
+      claimed_by VARCHAR(255) NULL,
+      payment_method VARCHAR(50) NULL
     )`,
     
     `CREATE TABLE IF NOT EXISTS mute_cooldowns (
@@ -222,8 +222,17 @@ async function updateLastMuteTime(userId) {
 
 async function saveTicket(ticketData) {
   const [result] = await db.execute(
-    'INSERT INTO tickets (channel_id, user_id, status, claimed_by) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE status = ?, claimed_by = ?',
-    [ticketData.channelId, ticketData.userId, ticketData.status, ticketData.claimedBy, ticketData.status, ticketData.claimedBy]
+    'INSERT INTO tickets (channel_id, user_id, status, claimed_by, payment_method) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status = ?, claimed_by = ?, payment_method = ?',
+    [
+      ticketData.channelId, 
+      ticketData.userId, 
+      ticketData.status, 
+      ticketData.claimedBy, 
+      ticketData.paymentMethod,
+      ticketData.status, 
+      ticketData.claimedBy, 
+      ticketData.paymentMethod
+    ]
   );
   return result;
 }
@@ -725,7 +734,7 @@ async function sendPremiumAd(interaction) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('purchase_premium')
-      .setLabel('Purchase Now')
+      .setLabel('Select Payment Method')
       .setStyle(ButtonStyle.Success)
       .setEmoji('💳')
   );
@@ -915,7 +924,7 @@ client.once(Events.ClientReady, async () => {
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId('purchase_premium')
-            .setLabel('Purchase Now')
+            .setLabel('Select Payment Method')
             .setStyle(ButtonStyle.Success)
             .setEmoji('💳')
         );
@@ -1417,73 +1426,30 @@ client.on(Events.InteractionCreate, async interaction => {
       await updateGiveaway(interaction.message.id, { participants: data.participants });
       await interaction.reply({ content: '🎉 Joined giveaway!', ephemeral: true });
     } else if (interaction.customId === 'purchase_premium') {
-      try {
-        const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
-        const channelOptions = {
-          name: `lifetime-purchase-${interaction.user.username}`,
-          type: ChannelType.GuildText,
-          permissionOverwrites: [
-            { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
-            ...OWNER_IDS.map(id => ({
-              id,
-              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-            })),
-            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
-            ...ADDITIONAL_TICKET_ROLES.map(id => ({
-              id,
-              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
-            }))
-          ]
-        };
-        if (category) channelOptions.parent = category.id;
-        const ticket = await interaction.guild.channels.create(channelOptions);
+      // Show payment method selection modal
+      const modal = new ModalBuilder()
+        .setCustomId('premium_payment_modal')
+        .setTitle('💰 Select Payment Method');
 
-        const panel = new EmbedBuilder()
-          .setTitle('🛒 Purchase Ticket')
-          .setDescription('Our team will assist you shortly.')
-          .setColor('#0099ff');
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId('close_purchase_ticket')
-            .setLabel('Close Ticket')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('🔒')
+      const paymentSelect = new StringSelectMenuBuilder()
+        .setCustomId('payment_method')
+        .setPlaceholder('Choose your payment method')
+        .addOptions(
+          { label: 'GooglePay', value: 'googlepay', emoji: '📱' },
+          { label: 'Apple Pay', value: 'applepay', emoji: '💳' },
+          { label: 'CashApp', value: 'cashapp', emoji: '💵' },
+          { label: 'Crypto', value: 'crypto', emoji: '₿' },
+          { label: 'PIX', value: 'pix', emoji: '🇧🇷' },
+          { label: 'PayPal', value: 'paypal', emoji: '💰' },
+          { label: 'Venmo', value: 'venmo', emoji: '📱' },
+          { label: 'Zelle', value: 'zelle', emoji: '📱' }
         );
-        await ticket.send({ content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')} ${ADDITIONAL_TICKET_ROLES.map(i => `<@&${i}>`).join(' ')}`, embeds: [panel], components: [row] });
-        const info = new EmbedBuilder()
-          .setTitle('💎 Eps1llon Hub Premium Purchase')
-          .setDescription(`**Price:** $${PREMIUM_PRICE_LIFETIME} (Lifetime)\n\n**Accepted Payment Methods:**\n• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle`)
-          .setColor('#FFD700')
-          .setTimestamp();
-        await ticket.send({ embeds: [info] });
-        
-        const ticketData = {
-          channelId: ticket.id,
-          userId: interaction.user.id,
-          status: 'open',
-          claimedBy: null
-        };
-        await saveTicket(ticketData);
-        ticketTranscripts.set(ticket.id, []);
-        await interaction.reply({ content: `✅ Purchase ticket created: <#${ticket.id}>`, ephemeral: true });
-        const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
-        if (log) {
-          const logEmbed = new EmbedBuilder()
-            .setTitle('🛒 Premium Purchase Ticket Created')
-            .addFields(
-              { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
-              { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
-              { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true }
-            )
-            .setColor('#FFD700')
-            .setTimestamp();
-          await log.send({ embeds: [logEmbed] });
-        }
-      } catch (e) {
-        console.error(e);
-        await interaction.reply({ content: '❌ Failed to create purchase ticket.', ephemeral: true });
-      }
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(paymentSelect)
+      );
+
+      await interaction.showModal(modal);
     } else if (interaction.customId === 'close_purchase_ticket') {
       const ticketData = await getTicketByChannel(interaction.channel.id);
       if (!ticketData) return interaction.reply({ content: '❌ Not a ticket channel.', ephemeral: true });
@@ -1620,7 +1586,8 @@ client.on(Events.InteractionCreate, async interaction => {
         channelId: ticket.id,
         userId: interaction.user.id,
         status: 'open',
-        claimedBy: null
+        claimedBy: null,
+        paymentMethod: null
       };
       await saveTicket(ticketData);
       ticketTranscripts.set(ticket.id, []);
@@ -1747,6 +1714,110 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await appChannel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
       await interaction.editReply({ content: '✅ Your reseller application channel has been created. Staff will review it shortly.', ephemeral: true });
+    } else if (interaction.customId === 'premium_payment_modal') {
+      // Handle payment method selection
+      await interaction.deferReply({ ephemeral: true });
+      
+      const paymentSelect = interaction.fields.getSelectMenu('payment_method');
+      const paymentMethod = paymentSelect.firstValue;
+      const selectedOption = paymentSelect.options.find(opt => opt.value === paymentMethod);
+      
+      if (!selectedOption) {
+        return interaction.editReply({ content: '❌ Invalid payment method selected. Please try again.', ephemeral: true });
+      }
+      
+      try {
+        const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
+        const channelName = `purchase-${paymentMethod}`;
+        const channelOptions = {
+          name: channelName,
+          type: ChannelType.GuildText,
+          permissionOverwrites: [
+            { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+            ...OWNER_IDS.map(id => ({
+              id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            })),
+            { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels] },
+            ...ADDITIONAL_TICKET_ROLES.map(id => ({
+              id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            }))
+          ]
+        };
+        if (category) channelOptions.parent = category.id;
+        
+        const ticket = await interaction.guild.channels.create(channelOptions);
+        
+        // Send payment method message
+        const paymentMessage = `**Payment Method:** ${selectedOption.emoji} ${selectedOption.label}`;
+        await ticket.send(paymentMessage);
+        
+        // Send ticket panel
+        const panel = new EmbedBuilder()
+          .setTitle('🛒 Purchase Ticket')
+          .setDescription('Our team will assist you shortly.')
+          .setColor('#0099ff');
+        const row = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('close_purchase_ticket')
+            .setLabel('Close Ticket')
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji('🔒')
+        );
+        await ticket.send({ 
+          content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')} ${ADDITIONAL_TICKET_ROLES.map(i => `<@&${i}>`).join(' ')}`,
+          embeds: [panel],
+          components: [row]
+        });
+        
+        // Send premium info
+        const info = new EmbedBuilder()
+          .setTitle('💎 Eps1llon Hub Premium Purchase')
+          .setDescription(`**Price:** $${PREMIUM_PRICE_LIFETIME} (Lifetime)\n\n**Accepted Payment Methods:**\n• GooglePay\n• Apple Pay\n• CashApp\n• Crypto\n• PIX\n• PayPal\n• Venmo\n• Zelle`)
+          .setColor('#FFD700')
+          .setTimestamp();
+        await ticket.send({ embeds: [info] });
+        
+        // Save ticket data
+        const ticketData = {
+          channelId: ticket.id,
+          userId: interaction.user.id,
+          status: 'open',
+          claimedBy: null,
+          paymentMethod: paymentMethod
+        };
+        await saveTicket(ticketData);
+        ticketTranscripts.set(ticket.id, []);
+        
+        await interaction.editReply({ 
+          content: `✅ Purchase ticket created: <#${ticket.id}>`, 
+          ephemeral: true 
+        });
+        
+        // Log
+        const log = interaction.guild.channels.cache.get(TICKET_LOGS_CHANNEL_ID);
+        if (log) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('🛒 Premium Purchase Ticket Created')
+            .addFields(
+              { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
+              { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
+              { name: 'Payment Method', value: `${selectedOption.emoji} ${selectedOption.label}`, inline: true },
+              { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true }
+            )
+            .setColor('#FFD700')
+            .setTimestamp();
+          await log.send({ embeds: [logEmbed] });
+        }
+      } catch (e) {
+        console.error(e);
+        await interaction.editReply({ 
+          content: '❌ Failed to create purchase ticket.', 
+          ephemeral: true 
+        });
+      }
     }
   }
 });
@@ -1765,6 +1836,27 @@ client.on(Events.MessageCreate, async message => {
     const arr = ticketTranscripts.get(message.channel.id) || [];
     arr.push({ author: message.author.tag, content: message.content, timestamp: message.createdTimestamp });
     ticketTranscripts.set(message.channel.id, arr);
+  }
+
+  // Check for @everyone/@here mentions
+  if (message.mentions.everyone) {
+    try {
+      await message.delete();
+      await message.author.send("❌ You are not allowed to mention @everyone or @here in this server.");
+      
+      const logChannel = message.guild?.channels.cache.get(LOG_CHANNEL_ID);
+      if (logChannel) {
+        const embed = new EmbedBuilder()
+          .setTitle('⚠️ Mention Attempt')
+          .setDescription(`**User:** ${message.author.tag} (${message.author.id})\n**Channel:** <#${message.channel.id}>\n**Content:** ${message.content}`)
+          .setColor('#FF0000')
+          .setTimestamp();
+        await logChannel.send({ embeds: [embed] });
+      }
+    } catch (error) {
+      console.error('Error handling mention attempt:', error);
+    }
+    return;
   }
 
   // AI-powered auto-moderation
