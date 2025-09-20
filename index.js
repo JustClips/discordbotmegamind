@@ -736,7 +736,6 @@ async function sendPremiumAd(interaction) {
       .setCustomId('purchase_premium')
       .setLabel('Select Payment Method')
       .setStyle(ButtonStyle.Success)
-      .setEmoji('💳')
   );
   
   await interaction.reply({
@@ -926,7 +925,6 @@ client.once(Events.ClientReady, async () => {
             .setCustomId('purchase_premium')
             .setLabel('Select Payment Method')
             .setStyle(ButtonStyle.Success)
-            .setEmoji('💳')
         );
         
         await premiumChannel.send({
@@ -1351,7 +1349,6 @@ client.on(Events.InteractionCreate, async interaction => {
             .setCustomId('media_apply')
             .setLabel('Apply Now')
             .setStyle(ButtonStyle.Primary)
-            .setEmoji('📝')
         );
 
         await targetChannel.send({ embeds: [embed], components: [row] });
@@ -1381,7 +1378,6 @@ client.on(Events.InteractionCreate, async interaction => {
             .setCustomId('reseller_apply')
             .setLabel('Apply Now')
             .setStyle(ButtonStyle.Primary)
-            .setEmoji('📝')
         );
 
         await targetChannel.send({ embeds: [embed], components: [row] });
@@ -1431,22 +1427,23 @@ client.on(Events.InteractionCreate, async interaction => {
         .setCustomId('payment_method')
         .setPlaceholder('Choose your payment method')
         .addOptions(
-          { label: 'GooglePay', value: 'googlepay', emoji: '📱' },
-          { label: 'Apple Pay', value: 'applepay', emoji: '💳' },
-          { label: 'CashApp', value: 'cashapp', emoji: '💵' },
-          { label: 'Crypto', value: 'crypto', emoji: '₿' },
-          { label: 'PIX', value: 'pix', emoji: '🇧🇷' },
-          { label: 'PayPal', value: 'paypal', emoji: '💰' },
-          { label: 'Venmo', value: 'venmo', emoji: '📱' },
-          { label: 'Zelle', value: 'zelle', emoji: '📱' }
+          { label: 'GooglePay', value: 'googlepay' },
+          { label: 'Apple Pay', value: 'applepay' },
+          { label: 'CashApp', value: 'cashapp' },
+          { label: 'Crypto', value: 'crypto' },
+          { label: 'PIX', value: 'pix' },
+          { label: 'PayPal', value: 'paypal' },
+          { label: 'Venmo', value: 'venmo' },
+          { label: 'Zelle', value: 'zelle' }
         );
 
       const row = new ActionRowBuilder().addComponents(paymentSelect);
 
+      // Fixed: use flags: 64 instead of ephemeral: true
       await interaction.reply({
         content: 'Please select your payment method:',
         components: [row],
-        ephemeral: true
+        flags: 64
       });
     } else if (interaction.customId === 'close_purchase_ticket') {
       const ticketData = await getTicketByChannel(interaction.channel.id);
@@ -1539,24 +1536,18 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.deferUpdate(); // Acknowledge the selection
 
       const paymentMethod = interaction.values[0];
-      const paymentMethodMap = {
-        googlepay: { label: 'GooglePay', emoji: '📱' },
-        applepay: { label: 'Apple Pay', emoji: '💳' },
-        cashapp: { label: 'CashApp', emoji: '💵' },
-        crypto: { label: 'Crypto', emoji: '₿' },
-        pix: { label: 'PIX', emoji: '🇧🇷' },
-        paypal: { label: 'PayPal', emoji: '💰' },
-        venmo: { label: 'Venmo', emoji: '📱' },
-        zelle: { label: 'Zelle', emoji: '📱' }
+      const paymentLabelMap = {
+        googlepay: 'GooglePay',
+        applepay: 'Apple Pay',
+        cashapp: 'CashApp',
+        crypto: 'Crypto',
+        pix: 'PIX',
+        paypal: 'PayPal',
+        venmo: 'Venmo',
+        zelle: 'Zelle'
       };
 
-      const selected = paymentMethodMap[paymentMethod];
-      if (!selected) {
-        return interaction.editReply({ 
-          content: '❌ Invalid payment method selected. Please try again.', 
-          ephemeral: true 
-        });
-      }
+      const paymentLabel = paymentLabelMap[paymentMethod] || paymentMethod;
 
       try {
         const category = interaction.guild.channels.cache.get(PREMIUM_CATEGORY_ID);
@@ -1582,8 +1573,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const ticket = await interaction.guild.channels.create(channelOptions);
 
-        // Send payment method message
-        const paymentMessage = `**Payment Method:** ${selected.emoji} ${selected.label}`;
+        // Send payment method message (text only)
+        const paymentMessage = `**Payment Method:** ${paymentLabel}`;
         await ticket.send(paymentMessage);
 
         // Send ticket panel
@@ -1596,7 +1587,6 @@ client.on(Events.InteractionCreate, async interaction => {
             .setCustomId('close_purchase_ticket')
             .setLabel('Close Ticket')
             .setStyle(ButtonStyle.Danger)
-            .setEmoji('🔒')
         );
         await ticket.send({ 
           content: `<@${interaction.user.id}> ${OWNER_IDS.map(i => `<@${i}>`).join(' ')} ${ADDITIONAL_TICKET_ROLES.map(i => `<@&${i}>`).join(' ')}`,
@@ -1636,7 +1626,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .addFields(
               { name: 'User', value: `<@${interaction.user.id}>`, inline: true },
               { name: 'Channel', value: `<#${ticket.id}>`, inline: true },
-              { name: 'Payment Method', value: `${selected.emoji} ${selected.label}`, inline: true },
+              { name: 'Payment Method', value: paymentLabel, inline: true },
               { name: 'Price', value: `$${PREMIUM_PRICE_LIFETIME} Lifetime`, inline: true }
             )
             .setColor('#FFD700')
@@ -1679,9 +1669,9 @@ client.on(Events.InteractionCreate, async interaction => {
         .setDescription('Use the buttons below to manage this ticket')
         .setColor('#0099ff');
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success).setEmoji('✅'),
-        new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
-        new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary).setEmoji('📝')
+        new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setStyle(ButtonStyle.Secondary)
       );
       await ticket.send({ content: `<@${interaction.user.id}> <@&${SUPPORT_ROLE_ID}> ${ADDITIONAL_TICKET_ROLES.map(id => `<@&${id}>`).join(' ')}`, embeds: [panel], components: [row] });
 
