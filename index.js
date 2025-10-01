@@ -536,6 +536,9 @@ const BOT_USER_ID = '834413279920128042'; // Your bot's user ID
 // Additional roles that can access tickets
 const ADDITIONAL_TICKET_ROLES = ['1409618882041352322', '1398413061169352949'];
 
+// User allowed to ping @everyone and @here
+const ALLOWED_MENTION_USER = '655377688596447233';
+
 /* -------------------------------------------------
    CLIENT & GLOBAL MAPS (now using database)
    ------------------------------------------------- */
@@ -1175,7 +1178,7 @@ client.on(Events.InteractionCreate, async interaction => {
               .setStyle(ButtonStyle.Primary)
           );
           const msg = await channel.send({ embeds: [embed], components: [row] });
-          
+         
           const giveawayData = {
             messageId: msg.id,
             channelId: channel.id,
@@ -1186,10 +1189,10 @@ client.on(Events.InteractionCreate, async interaction => {
             participants: [],
             host: member.id
           };
-          
+         
           await saveGiveaway(giveawayData);
           activeGiveaways.set(msg.id, giveawayData);
-          
+         
           const interval = setInterval(async () => {
             const now = Date.now();
             const left = Math.max(0, Math.floor((end - now) / 1000));
@@ -1878,8 +1881,8 @@ client.on(Events.MessageCreate, async message => {
     ticketTranscripts.set(message.channel.id, arr);
   }
 
-  // Check for @everyone/@here mentions
-  if (message.mentions.everyone || message.mentions.has('@here')) {
+  // Check for @everyone/@here mentions - EXCEPT for allowed user
+  if ((message.mentions.everyone || message.mentions.has('@here')) && message.author.id !== ALLOWED_MENTION_USER) {
     try {
       await message.delete();
       await message.author.send("❌ You are not allowed to mention @everyone or @here in this server.");
